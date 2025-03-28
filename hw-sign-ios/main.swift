@@ -20,17 +20,17 @@ struct ContentView: View {
                 .padding()
 
             Button("Register") {
-                sendRequest(endpoint: "/register", payload: ["username": username, "password": password])
+                handleRequest(endpoint: "/register", payload: ["username": username, "password": password])
             }
             .buttonStyle(.borderedProminent)
 
             Button("Login") {
-                sendRequest(endpoint: "/login", payload: ["username": username, "password": password])
+                handleRequest(endpoint: "/login", payload: ["username": username, "password": password])
             }
             .buttonStyle(.borderedProminent)
 
             Button("Check Auth") {
-                checkAuthentication()
+                handleRequest(endpoint: "/authenticated", isGet: true)
             }
             .buttonStyle(.borderedProminent)
 
@@ -41,53 +41,26 @@ struct ContentView: View {
         .padding()
     }
 
-    func sendRequest(endpoint: String, payload: [String: Any]) {
+    func handleRequest(endpoint: String, payload: [String: Any] = [:], isGet: Bool = false) {
         guard let url = URL(string: "https://dbcs-api.reito.fun" + endpoint) else {
             message = "Invalid URL"
             return
         }
 
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+        request.httpMethod = isGet ? "GET" : "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
-        } catch {
-            message = "Error serializing JSON: \(error)"
-            return
+        if !isGet {
+            do {
+                request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+            } catch {
+                message = "Error serializing JSON: \(error)"
+                return
+            }
         }
 
         URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                DispatchQueue.main.async {
-                    message = "Request failed: \(error)"
-                }
-                return
-            }
-
-            guard let data = data else {
-                DispatchQueue.main.async {
-                    message = "No data received"
-                }
-                return
-            }
-
-            if let responseString = String(data: data, encoding: .utf8) {
-                DispatchQueue.main.async {
-                    message = responseString
-                }
-            }
-        }.resume()
-    }
-
-    func checkAuthentication() {
-        guard let url = URL(string: "https://dbcs-api.reito.fun/authenticated") else {
-            message = "Invalid URL"
-            return
-        }
-
-        URLSession.shared.dataTask(with: url) { data, response, error in
             if let error = error {
                 DispatchQueue.main.async {
                     message = "Request failed: \(error)"

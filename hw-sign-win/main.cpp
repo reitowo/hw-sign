@@ -4,23 +4,18 @@
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
-void sendRequest(const std::string& endpoint, const std::string& jsonPayload) {
-    auto response = cpr::Post(cpr::Url{"https://dbcs-api.reito.fun" + endpoint},
-                              cpr::Body{jsonPayload},
-                              cpr::Header{{"Content-Type", "application/json"}});
+void handleRequest(const std::string& endpoint, const std::string& jsonPayload = "", bool isGet = false) {
+    cpr::Response response;
+    if (isGet) {
+        response = cpr::Get(cpr::Url{"https://dbcs-api.reito.fun" + endpoint});
+    } else {
+        response = cpr::Post(cpr::Url{"https://dbcs-api.reito.fun" + endpoint},
+                             cpr::Body{jsonPayload},
+                             cpr::Header{{"Content-Type", "application/json"}});
+    }
 
     if (response.status_code == 200) {
         MessageBoxA(NULL, response.text.c_str(), "Response", MB_OK);
-    } else {
-        MessageBoxA(NULL, ("Request failed with status code: " + std::to_string(response.status_code)).c_str(), "Error", MB_OK);
-    }
-}
-
-void checkAuthentication() {
-    auto response = cpr::Get(cpr::Url{"https://dbcs-api.reito.fun/authenticated"});
-
-    if (response.status_code == 200) {
-        MessageBoxA(NULL, response.text.c_str(), "Authentication Status", MB_OK);
     } else {
         MessageBoxA(NULL, ("Request failed with status code: " + std::to_string(response.status_code)).c_str(), "Error", MB_OK);
     }
@@ -86,16 +81,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             GetWindowText(hPassword, password, 100);
 
             std::string payload = "{\"username\":\"" + std::string(username) + "\",\"password\":\"" + std::string(password) + "\"}";
-            sendRequest("/register", payload);
+            handleRequest("/register", payload);
         } else if (LOWORD(wParam) == 2) { // Login button
             char username[100], password[100];
             GetWindowText(hUsername, username, 100);
             GetWindowText(hPassword, password, 100);
 
             std::string payload = "{\"username\":\"" + std::string(username) + "\",\"password\":\"" + std::string(password) + "\"}";
-            sendRequest("/login", payload);
+            handleRequest("/login", payload);
         } else if (LOWORD(wParam) == 3) { // Check Auth button
-            checkAuthentication();
+            handleRequest("/authenticated", "", true);
         }
         break;
 
