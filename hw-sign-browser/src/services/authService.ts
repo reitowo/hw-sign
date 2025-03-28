@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Base URL for the API
 const apiClient = axios.create({
-  baseURL: 'https://api.example.com', // Replace with your API base URL
+  baseURL: 'https://dbcs-api.reito.fun', // Replace with your API base URL
   headers: {
     'Content-Type': 'application/json',
   },
