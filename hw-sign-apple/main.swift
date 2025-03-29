@@ -39,6 +39,9 @@ struct ContentView: View {
                 .padding()
         }
         .padding()
+        #if os(macOS)
+        .frame(minWidth: 400, minHeight: 400)
+        #endif
     }
 
     func handleRequest(endpoint: String, payload: [String: Any] = [:], isGet: Bool = false) {
