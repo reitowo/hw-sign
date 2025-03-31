@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue';
-import { 
-  register, 
-  login, 
-  logout, 
-  isAuthenticated as checkAuthService, 
-  toggleSymmetricEncryption, 
-  isSymmetricEncryptionEnabled 
+import { ref, watch, onMounted, computed } from 'vue';
+import {
+  register,
+  login,
+  logout,
+  isAuthenticated as checkAuthService,
+  toggleSymmetricEncryption,
+  isSymmetricEncryptionEnabled
 } from './services/authService';
 
+// Reactive state
 const isAuthenticated = ref(false);
 const message = ref('');
 const username = ref('');
@@ -17,65 +18,52 @@ const darkMode = ref(false);
 const isLoading = ref(false);
 const useSymmetric = ref(true);
 
+// Computed properties for UI state
+const messageClass = computed(() => ({
+  'text-green-600 dark:text-green-400': message.value.includes('successful'),
+  'text-red-600 dark:text-red-400': !message.value.includes('successful')
+}));
+
+const formIsValid = computed(() => username.value && password.value);
+
+// Auth handlers
 async function handleRegister() {
-  if (!username.value || !password.value) {
+  if (!formIsValid.value) {
     message.value = 'Please enter both username and password';
     return;
   }
 
-  isLoading.value = true;
-  message.value = '';
-  try {
+  await performAuthOperation(async () => {
     await register({ username: username.value, password: password.value });
-    message.value = 'Registration successful! Please log in.';
-  } catch (error) {
-    message.value = error instanceof Error ? error.message : 'Registration failed';
-  } finally {
-    isLoading.value = false;
-  }
+    return 'Registration successful! Please log in.';
+  });
 }
 
 async function handleLogin() {
-  if (!username.value || !password.value) {
+  if (!formIsValid.value) {
     message.value = 'Please enter both username and password';
     return;
   }
 
-  isLoading.value = true;
-  message.value = '';
-  try {
+  await performAuthOperation(async () => {
     await login({ username: username.value, password: password.value });
     isAuthenticated.value = true;
-    message.value = 'Login successful!';
-  } catch (error) {
-    message.value = error instanceof Error ? error.message : 'Login failed';
-    isAuthenticated.value = false;
-  } finally {
-    isLoading.value = false;
-  }
+    return 'Login successful!';
+  });
 }
 
 function handleLogout() {
   logout();
   isAuthenticated.value = false;
-  message.value = '';
 }
 
 async function checkAuthentication() {
-  isLoading.value = true;
-  try {
+  await performAuthOperation(async () => {
     const authenticated = await checkAuthService();
-    if (authenticated) {
-      message.value = 'You are successfully authenticated and token protected by hardware!';
-    } else {
-      message.value = 'You are not authenticated, something went wrong.';
-    }
-  } catch (error) {
-    message.value = error instanceof Error ? error.message : 'Error checking authentication';
-    console.error('Auth check failed:', error);
-  } finally {
-    isLoading.value = false;
-  }
+    return authenticated
+      ? 'You are successfully authenticated and token protected by hardware!'
+      : 'You are not authenticated, something went wrong.';
+  });
 }
 
 async function handleToggleEncryption() {
@@ -88,41 +76,67 @@ async function handleToggleEncryption() {
   }
 }
 
-// Move dark mode initialization to onMounted
-onMounted(async () => {
-  // Check initial auth state
+// Helper function to reduce repetitive code in auth operations
+async function performAuthOperation(operation: () => Promise<string>) {
+  isLoading.value = true;
   try {
+    message.value = await operation();
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : 'Operation failed';
+    console.error('Auth operation failed:', error);
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+// Toggle dark mode
+function toggleDarkMode() {
+  darkMode.value = !darkMode.value;
+}
+
+// Initialization
+onMounted(async () => {
+  try {
+    // Check initial auth state and load preferences
     isAuthenticated.value = await checkAuthService();
-    // Load encryption preference
     useSymmetric.value = isSymmetricEncryptionEnabled();
+
+    // Setup dark mode based on saved preference or system preference
+    initializeDarkMode();
+
+    // Add cleanup handler
+    window.addEventListener('unload', () => {
+      if (!isAuthenticated.value) {
+        logout();  // Clean up IndexedDB if not authenticated
+      }
+    });
   } catch (e) {
-    console.debug('Initial auth check failed:', e);
+    console.debug('Initial setup failed:', e);
   }
-
-  // Setup dark mode
-  darkMode.value = localStorage.getItem('darkMode') === 'true' ||
-    (localStorage.getItem('darkMode') === null && window.matchMedia('(prefers-color-scheme: dark)').matches);
-
-  // Apply initial dark mode
-  if (darkMode.value) {
-    document.documentElement.classList.add('dark');
-  }
-
-  // Add cleanup handler
-  window.addEventListener('unload', () => {
-    if (!isAuthenticated.value) {
-      logout();  // This will clean up IndexedDB if not authenticated
-    }
-  });
 });
 
-watch(darkMode, (newValue) => {
-  if (newValue) {
+// Initialize dark mode based on saved preference or system preference
+function initializeDarkMode() {
+  darkMode.value = localStorage.getItem('darkMode') === 'true' ||
+    (localStorage.getItem('darkMode') === null &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+  applyDarkMode();
+}
+
+// Apply dark mode to document
+function applyDarkMode() {
+  if (darkMode.value) {
     document.documentElement.classList.add('dark');
   } else {
     document.documentElement.classList.remove('dark');
   }
+}
+
+// Watch for dark mode changes to save preference and apply
+watch(darkMode, (newValue) => {
   localStorage.setItem('darkMode', newValue.toString());
+  applyDarkMode();
 });
 </script>
 
@@ -132,60 +146,56 @@ watch(darkMode, (newValue) => {
       class="w-full max-w-lg bg-white dark:bg-gray-800 rounded-lg shadow-lg p-8 border border-gray-200 dark:border-gray-700">
       <h1 class="text-2xl font-bold text-center mb-6 text-gray-900 dark:text-gray-100">User Authentication</h1>
 
-      <div v-if="!isAuthenticated">
-        <div class="mb-6">
+      <!-- Login Form -->
+      <div v-if="!isAuthenticated" class="space-y-6">
+        <div>
           <label for="username" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Username</label>
           <input v-model="username" id="username" type="text" :disabled="isLoading"
             class="mt-2 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-gray-100 px-4 py-2"
             placeholder="Enter your username" />
         </div>
-        <div class="mb-6">
+        <div>
           <label for="password" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Password</label>
           <input v-model="password" id="password" type="password" :disabled="isLoading"
             class="mt-2 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-gray-100 px-4 py-2"
             placeholder="Enter your password" />
         </div>
         <div class="flex justify-between">
-          <button @click="handleRegister" :disabled="isLoading"
-            class="bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed">
+          <button @click="handleRegister" :disabled="isLoading" class="btn-green">
             Register
           </button>
-          <button @click="handleLogin" :disabled="isLoading"
-            class="bg-indigo-600 text-white py-2 px-4 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed">
+          <button @click="handleLogin" :disabled="isLoading" class="btn-primary">
             Login
           </button>
         </div>
       </div>
 
+      <!-- Authenticated View -->
       <div v-else class="text-center">
         <p class="text-lg font-medium text-green-600 dark:text-green-400 mb-4">You are authenticated!</p>
         <div class="space-y-4">
-          <button @click="checkAuthentication" :disabled="isLoading"
-            class="bg-indigo-600 text-white py-2 px-4 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed w-full">
+          <button @click="checkAuthentication" :disabled="isLoading" class="btn-primary w-full">
             Check Hardware Sign Status
           </button>
-          
-          <button @click="handleToggleEncryption"
-            class="bg-yellow-600 text-white py-2 px-4 rounded-lg hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 w-full">
+
+          <button @click="handleToggleEncryption" class="btn-yellow w-full">
             {{ useSymmetric ? 'Using ECDH+AES (Faster)' : 'Using Asymmetric Signatures' }}
           </button>
-          
-          <button @click="handleLogout"
-            class="bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 w-full">
+
+          <button @click="handleLogout" class="btn-danger w-full">
             Logout
           </button>
         </div>
       </div>
 
-      <p v-if="message" class="mt-4 text-center text-sm" :class="{
-        'text-green-600 dark:text-green-400': message.includes('successful'),
-        'text-red-600 dark:text-red-400': !message.includes('successful')
-      }">
-        {{ message }}
+      <!-- Status message -->
+      <p class="mt-4 text-center text-sm" :class="messageClass">
+        {{ message ?? 'Ready' }}
       </p>
 
+      <!-- Dark mode toggle -->
       <div class="mt-6 flex justify-end">
-        <button @click="() => darkMode = !darkMode"
+        <button @click="toggleDarkMode"
           class="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 text-2xl">
           {{ darkMode ? '☀️' : '🌙' }}
         </button>
@@ -197,5 +207,22 @@ watch(darkMode, (newValue) => {
 <style scoped>
 body {
   font-family: 'Inter', sans-serif;
+}
+
+/* Button styles */
+.btn-primary {
+  @apply bg-indigo-600 text-white py-2 px-4 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+.btn-green {
+  @apply bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+.btn-yellow {
+  @apply bg-yellow-600 text-white py-2 px-4 rounded-lg hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900;
+}
+
+.btn-danger {
+  @apply bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2;
 }
 </style>

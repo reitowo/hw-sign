@@ -1,6 +1,6 @@
 import axios, { AxiosError } from 'axios';
 
-// Add server response types
+// Response type definitions
 interface ServerResponse {
   message?: string;
 }
@@ -19,15 +19,16 @@ const apiClient = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+// Storage constants
 const DB_NAME = 'DBCS';
 const DB_VERSION = 1;
-
 const STORE_NAME = 'auth_data';
 const HW_KEY_ID = 'hardware_key';
 const AUTH_TOKEN_ID = 'auth_token';
 const ACCEL_KEY_ID_STORE = 'accel_key_id';
 const PREFER_SYMMETRIC_STORE = 'prefer_symmetric';
 
+// In-memory state
 let hardwareKey: CryptoKeyPair | null = null;
 let accelerationKey: CryptoKeyPair | null = null;
 let accelerationKeyId: string | null = null;
@@ -35,7 +36,7 @@ let ecdhAccelerationKey: CryptoKeyPair | null = null;
 let symmetricKey: CryptoKey | null = null;
 let preferSymmetricEncryption = true; // Default to true for better performance
 
-// IndexedDB setup
+// IndexedDB helper functions
 async function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -97,53 +98,36 @@ async function deleteData(key: string): Promise<void> {
   });
 }
 
-async function storeHardwareKey(key: CryptoKeyPair): Promise<void> {
-  return storeData(HW_KEY_ID, key);
-}
+// Key storage wrappers
+const storage = {
+  hardwareKey: {
+    store: (key: CryptoKeyPair) => storeData(HW_KEY_ID, key),
+    load: () => loadData(HW_KEY_ID) as Promise<CryptoKeyPair | null>,
+    delete: () => deleteData(HW_KEY_ID)
+  },
+  authToken: {
+    store: (token: string) => storeData(AUTH_TOKEN_ID, token),
+    load: () => loadData(AUTH_TOKEN_ID) as Promise<string | null>,
+    delete: () => deleteData(AUTH_TOKEN_ID)
+  },
+  accelKeyId: {
+    store: (id: string) => storeData(ACCEL_KEY_ID_STORE, id),
+    load: () => loadData(ACCEL_KEY_ID_STORE) as Promise<string | null>,
+    delete: () => deleteData(ACCEL_KEY_ID_STORE)
+  },
+  preferSymmetric: {
+    store: (value: boolean) => storeData(PREFER_SYMMETRIC_STORE, value),
+    load: async () => {
+      const value = await loadData(PREFER_SYMMETRIC_STORE);
+      return value !== false; // Default to true if not set
+    }
+  }
+};
 
-async function loadHardwareKey(): Promise<CryptoKeyPair | null> {
-  return loadData(HW_KEY_ID);
-}
-
-async function deleteHardwareKey(): Promise<void> {
-  return deleteData(HW_KEY_ID);
-}
-
-async function storeAuthToken(token: string): Promise<void> {
-  return storeData(AUTH_TOKEN_ID, token);
-}
-
-async function loadAuthToken(): Promise<string | null> {
-  return loadData(AUTH_TOKEN_ID);
-}
-
-async function deleteAuthToken(): Promise<void> {
-  return deleteData(AUTH_TOKEN_ID);
-}
-
-async function storeAccelerationKeyId(id: string): Promise<void> {
-  return storeData(ACCEL_KEY_ID_STORE, id);
-}
-
-async function loadAccelerationKeyId(): Promise<string | null> {
-  return loadData(ACCEL_KEY_ID_STORE);
-}
-
-async function deleteAccelerationKeyId(): Promise<void> {
-  return deleteData(ACCEL_KEY_ID_STORE);
-}
-
-async function loadPreferSymmetric(): Promise<boolean> {
-  const value = await loadData(PREFER_SYMMETRIC_STORE);
-  return value !== false; // Default to true if not set
-}
-
-async function storePreferSymmetric(value: boolean): Promise<void> {
-  return storeData(PREFER_SYMMETRIC_STORE, value);
-}
-
+// Supported key algorithms
 type KeyAlgorithm = 'Ed25519' | 'ECDSA' | 'RSA-PSS' | 'ECDH';
 
+// Generate keys with fallback support
 async function tryGenerateKey(type: KeyAlgorithm, extractable: boolean): Promise<CryptoKeyPair | null> {
   if (!window.crypto?.subtle) return null;
 
@@ -199,10 +183,9 @@ async function generateKey(extractable: boolean, type?: KeyAlgorithm): Promise<C
       console.debug(`Using ${type} for key`);
       return key;
     }
-    // If the specific type failed, fall through to try other algorithms
   }
 
-  // For regular signing keys, try algorithms in order of preference
+  // Try algorithms in order of preference
   const algorithms: KeyAlgorithm[] = ['Ed25519', 'ECDSA', 'RSA-PSS'];
   for (const algo of algorithms) {
     const key = await tryGenerateKey(algo, extractable);
@@ -214,6 +197,7 @@ async function generateKey(extractable: boolean, type?: KeyAlgorithm): Promise<C
   throw new Error('No supported key algorithms available');
 }
 
+// Utility functions for data conversion and encryption
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(String.fromCharCode(...new Uint8Array(buffer)));
 }
@@ -228,24 +212,8 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 }
 
 async function exportPublicKey(key: CryptoKey): Promise<string> {  
-  var format: 'spki' | 'raw';
-  switch (key.algorithm.name) {
-    case 'Ed25519':
-      format = 'raw';
-      break;
-    case 'ECDH':
-      format = 'raw';
-      break;
-    case 'ECDSA':
-      format = 'spki';
-      break;
-    case 'RSA-PSS':
-      format = 'spki';
-      break;
-    default:
-      format = 'spki';
-  }
-   
+  // Choose export format based on algorithm
+  const format = ['Ed25519', 'ECDH'].includes(key.algorithm.name) ? 'raw' : 'spki';
   const exported = await window.crypto.subtle.exportKey(format, key);
   return arrayBufferToBase64(exported);
 }
@@ -270,7 +238,6 @@ async function encryptWithAES(key: CryptoKey, data: string): Promise<string> {
   result.set(nonce, 0);
   result.set(new Uint8Array(ciphertext), nonce.length);
   
-  // Return as base64
   return arrayBufferToBase64(result);
 }
 
@@ -279,9 +246,6 @@ async function deriveSharedKey(privateKey: CryptoKey, publicKeyBase64: string): 
   try {
     // Import the server's public key
     const publicKeyData = base64ToArrayBuffer(publicKeyBase64);
-    
-    // Log the server's public key bytes to help with debugging
-    console.debug('Server public key length:', publicKeyData.byteLength);
     
     // Import the raw key data for ECDH
     const serverPublicKey = await window.crypto.subtle.importKey(
@@ -303,22 +267,20 @@ async function deriveSharedKey(privateKey: CryptoKey, publicKeyBase64: string): 
     const hash = await window.crypto.subtle.digest('SHA-256', derivedBits);
     
     // Create AES-GCM key from the derived bits
-    const aesKey = await window.crypto.subtle.importKey(
+    return await window.crypto.subtle.importKey(
       'raw',
       hash,
       { name: 'AES-GCM', length: 256 },
       false,
       ['encrypt', 'decrypt']
     );
-    
-    return aesKey;
   } catch (error) {
     console.error('Failed to derive shared key:', error);
-    console.error('Server public key base64:', publicKeyBase64);
     throw new Error('Failed to derive symmetric key');
   }
 }
 
+// Key management functions
 async function setupECDHAccelerationKey(): Promise<{
   ecdhPubKeyBase64: string;
   ecdhPubKeySig: string;
@@ -338,74 +300,6 @@ async function setupECDHAccelerationKey(): Promise<{
     console.error('Failed to setup ECDH key:', error);
     throw error;
   }
-}
-
-async function checkStorageSupport(): Promise<boolean> {
-  if (!window.indexedDB) return false;
-
-  try {
-    const db = await openDB();
-    db.close();
-    return true;
-  } catch (e) {
-    console.debug('IndexedDB not available:', e);
-    return false;
-  }
-}
-
-async function initHardwareKey(): Promise<void> {
-  // Check storage support first
-  const hasStorage = await checkStorageSupport();
-  if (!hasStorage) {
-    throw new Error('Secure key storage is not available in your browser. Please enable IndexedDB or use a modern browser.');
-  }
-
-  if (!hardwareKey) {
-    // Try to load existing key first
-    hardwareKey = await loadHardwareKey();
-    if (!hardwareKey) {
-      // Generate new key if none exists
-      hardwareKey = await generateKey(false); // Ensure hardware key is non-exportable
-      await storeHardwareKey(hardwareKey);
-    }
-  }
-}
-
-async function init(): Promise<void> {
-  try {
-    // Load hardware key and auth token
-    await initHardwareKey();
-    
-    // Load acceleration key ID if available
-    accelerationKeyId = await loadAccelerationKeyId();
-    
-    // Load symmetric encryption preference
-    preferSymmetricEncryption = await loadPreferSymmetric();
-  } catch (error) {
-    console.error('Failed to initialize auth service', error);
-  }
-}
-
-async function signWithKey(key: CryptoKey, data: string): Promise<string> {
-  const dataBuffer = new TextEncoder().encode(data);
-  let params;
-  switch (key.algorithm.name) {
-    case 'RSA-PSS':
-      params = { name: 'RSA-PSS', saltLength: 32 };
-      break;
-    case 'ECDSA':
-      params = { name: 'ECDSA', hash: 'SHA-256' };
-      break;
-    default:
-      params = { name: key.algorithm.name };
-  }
-
-  const signature = await window.crypto.subtle.sign(
-    params,
-    key,
-    dataBuffer
-  );
-  return arrayBufferToBase64(signature);
 }
 
 async function setupAccelerationKey(): Promise<{ accelPubKeyBase64: string; accelPubKeySig: string; keyType: string }> {
@@ -434,13 +328,78 @@ async function setupAccelerationKey(): Promise<{ accelPubKeyBase64: string; acce
   }
 }
 
+async function checkStorageSupport(): Promise<boolean> {
+  if (!window.indexedDB) return false;
+
+  try {
+    const db = await openDB();
+    db.close();
+    return true;
+  } catch (e) {
+    console.debug('IndexedDB not available:', e);
+    return false;
+  }
+}
+
+async function initHardwareKey(): Promise<void> {
+  if (hardwareKey) return; // Already initialized
+  
+  // Check storage support first
+  const hasStorage = await checkStorageSupport();
+  if (!hasStorage) {
+    throw new Error('Secure key storage is not available in your browser. Please enable IndexedDB or use a modern browser.');
+  }
+
+  // Try to load existing key first
+  hardwareKey = await storage.hardwareKey.load();
+  if (!hardwareKey) {
+    // Generate new key if none exists
+    hardwareKey = await generateKey(false); // Ensure hardware key is non-exportable
+    await storage.hardwareKey.store(hardwareKey);
+  }
+}
+
+async function init(): Promise<void> {
+  try {
+    // Load hardware key and auth token
+    await initHardwareKey();
+    
+    // Load acceleration key ID if available
+    accelerationKeyId = await storage.accelKeyId.load();
+    
+    // Load symmetric encryption preference
+    preferSymmetricEncryption = await storage.preferSymmetric.load();
+  } catch (error) {
+    console.error('Failed to initialize auth service', error);
+  }
+}
+
+async function signWithKey(key: CryptoKey, data: string): Promise<string> {
+  const dataBuffer = new TextEncoder().encode(data);
+  
+  // Configure algorithm parameters based on key type
+  const params = key.algorithm.name === 'RSA-PSS' 
+    ? { name: 'RSA-PSS', saltLength: 32 }
+    : key.algorithm.name === 'ECDSA'
+      ? { name: 'ECDSA', hash: 'SHA-256' }
+      : { name: key.algorithm.name };
+
+  const signature = await window.crypto.subtle.sign(
+    params,
+    key,
+    dataBuffer
+  );
+  return arrayBufferToBase64(signature);
+}
+
+// Primary authentication function
 async function authenticatedRequest<T>(
   method: 'get' | 'post',
   url: string,
   data?: any
 ): Promise<T> {
   try {
-    const token = await loadAuthToken();
+    const token = await storage.authToken.load();
     if (!token) throw new Error('Not authenticated');
 
     // Ensure hardware key is ready
@@ -449,69 +408,15 @@ async function authenticatedRequest<T>(
     // Prepare request data
     const timestamp = Date.now().toString();
     const requestData = data ? JSON.stringify(data) : timestamp;
+    const headers: Record<string, string> = { 'Authorization': `Bearer ${token}` };
 
-    // Setup headers
-    const headers: Record<string, string> = {
-      'Authorization': `Bearer ${token}`,
-    };
-
-    // If we have an acceleration key ID, try to use it with symmetric encryption if available
+    // Handle different authentication methods based on available keys
     if (accelerationKeyId) {
-      if (symmetricKey && preferSymmetricEncryption) {
-        // Use symmetric encryption (AES) if we have a negotiated key and preference is enabled
-        const encryptedData = await encryptWithAES(symmetricKey, requestData);
-        
-        headers['x-rpc-sec-dbcs-data'] = requestData;
-        headers['x-rpc-sec-dbcs-data-enc'] = encryptedData;
-        headers['x-rpc-sec-dbcs-accel-pub-id'] = accelerationKeyId;
-      } else if (accelerationKey) {
-        // Otherwise, use asymmetric signatures if we have an acceleration key
-        const signature = await signWithKey(accelerationKey.privateKey, requestData);
-        
-        headers['x-rpc-sec-dbcs-data'] = requestData;
-        headers['x-rpc-sec-dbcs-data-sig'] = signature;
-        headers['x-rpc-sec-dbcs-accel-pub-id'] = accelerationKeyId;
-      } else {
-        // If we have an ID but no keys, something is wrong - clear and start over
-        accelerationKeyId = null;
-        await deleteAccelerationKeyId();
-      }
-    }
-    
-    // If we don't have an acceleration key ID, we need to register one
-    if (!accelerationKeyId) {
-      // Try ECDH key exchange if supported by the browser and preference is enabled
-      var ecdhGenerated = false
-      if (window.crypto.subtle && preferSymmetricEncryption) {
-        try {
-          // Setup ECDH key exchange
-          const { ecdhPubKeyBase64, ecdhPubKeySig } = await setupECDHAccelerationKey();
-          
-          // Need to sign the request data with hardware key for verification
-          const dataSig = await signWithKey(hardwareKey!.privateKey, requestData);
-          
-          headers['x-rpc-sec-dbcs-accel-pub'] = ecdhPubKeyBase64;
-          headers['x-rpc-sec-dbcs-accel-pub-type'] = 'ecdh';
-          headers['x-rpc-sec-dbcs-accel-pub-sig'] = ecdhPubKeySig;
-          headers['x-rpc-sec-dbcs-data'] = requestData;
-          headers['x-rpc-sec-dbcs-data-sig'] = dataSig;  // Add signature for the data
-          ecdhGenerated = true;
-        } catch (error) {
-          console.debug('ECDH key exchange failed, falling back to asymmetric keys', error);
-        }
-      } 
-
-      if (!ecdhGenerated) {
-        // Fall back to generating new asymmetric acceleration key
-        const { accelPubKeyBase64, accelPubKeySig, keyType } = await setupAccelerationKey();
-        const signature = await signWithKey(accelerationKey!.privateKey, requestData);
-        
-        headers['x-rpc-sec-dbcs-accel-pub'] = accelPubKeyBase64;
-        headers['x-rpc-sec-dbcs-accel-pub-type'] = keyType;
-        headers['x-rpc-sec-dbcs-accel-pub-sig'] = accelPubKeySig;
-        headers['x-rpc-sec-dbcs-data'] = requestData;
-        headers['x-rpc-sec-dbcs-data-sig'] = signature;
-      }
+      // Use existing acceleration key ID
+      await handleExistingKeyAuth(headers, requestData);
+    } else {
+      // Register new acceleration key
+      await handleNewKeyRegistration(headers, requestData);
     }
 
     // Make the authenticated request
@@ -522,30 +427,12 @@ async function authenticatedRequest<T>(
       headers
     });
 
-    // If this was a new key registration, save the key ID from response
+    // Process response if this was a new key registration
     if (!accelerationKeyId && response.headers['x-rpc-sec-dbcs-accel-pub-id']) {
-      accelerationKeyId = response.headers['x-rpc-sec-dbcs-accel-pub-id'];
-      if (accelerationKeyId) {
-        await storeAccelerationKeyId(accelerationKeyId);
-      }
-      
-      // If this was an ECDH key exchange, also process the server's public key
-      if (ecdhAccelerationKey && response.headers['x-rpc-sec-dbcs-accel-pub'] && preferSymmetricEncryption) {
-        const serverPublicKeyBase64 = response.headers['x-rpc-sec-dbcs-accel-pub'];
-        
-        try {
-          // Derive the shared secret and create the symmetric key
-          symmetricKey = await deriveSharedKey(
-            ecdhAccelerationKey.privateKey, 
-            serverPublicKeyBase64
-          );
-          
-          console.debug('ECDH key exchange successful, symmetric encryption enabled');
-        } catch (error) {
-          console.error('Failed to establish symmetric key:', error);
-          // Continue with asymmetric encryption as fallback
-        }
-      }
+      const headers = Object.fromEntries(
+        Object.entries(response.headers).map(([key, value]) => [key, String(value)])
+      );
+      await processKeyRegistrationResponse(headers);
     }
 
     return response.data;
@@ -560,26 +447,109 @@ async function authenticatedRequest<T>(
   }
 }
 
-// Add functions to toggle symmetric encryption preference
+// Helper for existing key authentication
+async function handleExistingKeyAuth(headers: Record<string, string>, requestData: string): Promise<void> {
+  if (symmetricKey && preferSymmetricEncryption) {
+    // Use symmetric encryption with AES
+    const encryptedData = await encryptWithAES(symmetricKey, requestData);
+    
+    headers['x-rpc-sec-dbcs-data'] = requestData;
+    headers['x-rpc-sec-dbcs-data-enc'] = encryptedData;
+    headers['x-rpc-sec-dbcs-accel-pub-id'] = accelerationKeyId!;
+  } else if (accelerationKey) {
+    // Use asymmetric signatures
+    const signature = await signWithKey(accelerationKey.privateKey, requestData);
+    
+    headers['x-rpc-sec-dbcs-data'] = requestData;
+    headers['x-rpc-sec-dbcs-data-sig'] = signature;
+    headers['x-rpc-sec-dbcs-accel-pub-id'] = accelerationKeyId!;
+  } else {
+    // Invalid state, clear and force new registration
+    accelerationKeyId = null;
+    await storage.accelKeyId.delete();
+    throw new Error('Invalid key state, will register new key');
+  }
+}
+
+// Helper for new key registration
+async function handleNewKeyRegistration(headers: Record<string, string>, requestData: string): Promise<void> {
+  let isEcdhGenerated = false;
+  
+  // Try ECDH key exchange if supported and preferred
+  if (window.crypto.subtle && preferSymmetricEncryption) {
+    try {
+      // Setup ECDH key exchange
+      const { ecdhPubKeyBase64, ecdhPubKeySig } = await setupECDHAccelerationKey();
+      
+      // Sign request data with hardware key for this first exchange
+      const dataSig = await signWithKey(hardwareKey!.privateKey, requestData);
+      
+      headers['x-rpc-sec-dbcs-accel-pub'] = ecdhPubKeyBase64;
+      headers['x-rpc-sec-dbcs-accel-pub-type'] = 'ecdh';
+      headers['x-rpc-sec-dbcs-accel-pub-sig'] = ecdhPubKeySig;
+      headers['x-rpc-sec-dbcs-data'] = requestData;
+      headers['x-rpc-sec-dbcs-data-sig'] = dataSig;
+      isEcdhGenerated = true;
+    } catch (error) {
+      console.debug('ECDH key exchange failed, falling back to asymmetric keys', error);
+    }
+  }
+  
+  // Fall back to asymmetric keys if ECDH isn't available or failed
+  if (!isEcdhGenerated) {
+    const { accelPubKeyBase64, accelPubKeySig, keyType } = await setupAccelerationKey();
+    const signature = await signWithKey(accelerationKey!.privateKey, requestData);
+    
+    headers['x-rpc-sec-dbcs-accel-pub'] = accelPubKeyBase64;
+    headers['x-rpc-sec-dbcs-accel-pub-type'] = keyType;
+    headers['x-rpc-sec-dbcs-accel-pub-sig'] = accelPubKeySig;
+    headers['x-rpc-sec-dbcs-data'] = requestData;
+    headers['x-rpc-sec-dbcs-data-sig'] = signature;
+  }
+}
+
+// Process key registration response
+async function processKeyRegistrationResponse(headers: Record<string, string>): Promise<void> {
+  // Store the key ID
+  const keyId = headers['x-rpc-sec-dbcs-accel-pub-id'];
+  if (keyId) {
+    accelerationKeyId = keyId;
+    await storage.accelKeyId.store(keyId);
+    
+    // If this was an ECDH key exchange, process server's public key
+    const serverPubKey = headers['x-rpc-sec-dbcs-accel-pub'];
+    if (ecdhAccelerationKey && serverPubKey && preferSymmetricEncryption) {
+      try {
+        // Derive the shared secret and create the symmetric key
+        symmetricKey = await deriveSharedKey(ecdhAccelerationKey.privateKey, serverPubKey);
+        console.debug('ECDH key exchange successful, symmetric encryption enabled');
+      } catch (error) {
+        console.error('Failed to establish symmetric key:', error);
+      }
+    }
+  }
+}
+
+// Public API functions
 export async function toggleSymmetricEncryption(): Promise<boolean> {
   // Toggle the preference
   preferSymmetricEncryption = !preferSymmetricEncryption;
   
   // Store the updated preference
-  await storePreferSymmetric(preferSymmetricEncryption);
+  await storage.preferSymmetric.store(preferSymmetricEncryption);
   
-  // If we're disabling symmetric encryption, we should clear the symmetric key
+  // If disabling, clear the symmetric key (we'll keep using asymmetric with existing key ID)
   if (!preferSymmetricEncryption) {
     symmetricKey = null;
   }
   
-  // If we're re-enabling, but we have no acceleration key ID, do nothing
-  // A new key will be registered on the next request
-  
+  // Reset key state
+  accelerationKeyId = null;
+  await storage.accelKeyId.delete();
+
   return preferSymmetricEncryption;
 }
 
-// Function to check the current symmetric encryption preference
 export function isSymmetricEncryptionEnabled(): boolean {
   return preferSymmetricEncryption;
 }
@@ -610,22 +580,21 @@ export async function login(credentials: { username: string; password: string })
   );
 
   // Store the auth token
-  const token = response.data.token;
-  await storeAuthToken(token);
+  await storage.authToken.store(response.data.token);
 
   // Clear any existing acceleration keys when logging in
   accelerationKey = null;
   accelerationKeyId = null;
   ecdhAccelerationKey = null;
   symmetricKey = null;
-  await deleteAccelerationKeyId();
+  await storage.accelKeyId.delete();
 
   return response.data;
 }
 
 export async function isAuthenticated(): Promise<boolean> {
   try {
-    const token = await loadAuthToken();
+    const token = await storage.authToken.load();
     if (!token) return false;
 
     // Make an authenticated request to verify the token is valid
@@ -639,16 +608,17 @@ export async function isAuthenticated(): Promise<boolean> {
 
 export function logout(): void {
   Promise.all([
-    deleteAuthToken(),
-    deleteHardwareKey(),
-    deleteAccelerationKeyId(),
+    storage.authToken.delete(),
+    storage.hardwareKey.delete(),
+    storage.accelKeyId.delete(),
   ]).catch(console.error);
   
+  // Clear all sensitive data from memory
   hardwareKey = null;
   accelerationKey = null;
   accelerationKeyId = null;
   ecdhAccelerationKey = null;
-  symmetricKey = null; // Clear symmetric key from memory
+  symmetricKey = null;
 }
 
 // Initialize the service on module load
@@ -657,7 +627,6 @@ init().catch(console.error);
 // Add window unload handler to clear sensitive keys from memory
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
-    // Clear sensitive keys from memory
     ecdhAccelerationKey = null;
     symmetricKey = null;
   });
