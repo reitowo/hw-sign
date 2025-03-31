@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"crypto"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -28,6 +32,7 @@ const (
 	KeyTypeEd25519 KeyType = "ed25519"
 	KeyTypeECDSA   KeyType = "ecdsa"
 	KeyTypeRSAPSS  KeyType = "rsa-pss"
+	KeyTypeECDH    KeyType = "ecdh"
 )
 
 type PublicKeyInfo struct {
@@ -35,9 +40,17 @@ type PublicKeyInfo struct {
 	Type KeyType
 }
 
+// UnifiedKeyInfo combines both asymmetric and symmetric key information
+type UnifiedKeyInfo struct {
+	PublicKey     []byte      // Public key for asymmetric crypto
+	KeyType       KeyType     // The type of key (ecdsa, rsa-pss, ed25519)
+	SymmetricKey  []byte      // AES-256 key for symmetric encryption (if available)
+	ServerPrivKey interface{} // Server's private key for ECDH (if applicable)
+}
+
 var (
 	usersCache  = cache.New(3*time.Hour, 10*time.Minute) // Cache for user data
-	accelKeys   = cache.New(3*time.Hour, 10*time.Minute) // Cache for accelerated keys
+	accelKeys   = cache.New(3*time.Hour, 10*time.Minute) // Cache for unified acceleration keys
 	tokensCache = cache.New(3*time.Hour, 10*time.Minute) // Cache for tokens and associated hardware keys
 )
 
@@ -90,6 +103,47 @@ func parsePublicKey(keyData string, keyType string) (interface{}, error) {
 			return rsaKey, nil
 		}
 		return nil, errors.New("key is not RSA")
+
+	case string(KeyTypeECDH):
+		// Handle ECDH public keys
+		curve := ecdh.P256()
+
+		// Try to handle the key directly first
+		pubKey, err := curve.NewPublicKey(decoded)
+		if err == nil {
+			return pubKey, nil
+		}
+
+		// If direct import fails, try to handle different formats
+		if len(decoded) == 65 && decoded[0] == 0x04 {
+			// This is a raw uncompressed point format (0x04 || x || y)
+			// ECDH.NewPublicKey expects just raw bytes, so try using the raw x,y coordinates
+			x := new(big.Int).SetBytes(decoded[1:33])
+			y := new(big.Int).SetBytes(decoded[33:65])
+
+			// Convert to appropriate format for ECDH - first make sure it's on the curve
+			if !elliptic.P256().IsOnCurve(x, y) {
+				return nil, fmt.Errorf("point is not on P-256 curve")
+			}
+
+			// Marshal in the format ECDH expects
+			rawKey := elliptic.Marshal(elliptic.P256(), x, y)
+			return curve.NewPublicKey(rawKey)
+		}
+
+		// Try PKIX format
+		key, err := x509.ParsePKIXPublicKey(decoded)
+		if err == nil {
+			// If it's an ECDSA key, we can convert to ECDH format
+			if ecKey, ok := key.(*ecdsa.PublicKey); ok {
+				if ecKey.Curve == elliptic.P256() {
+					// Convert to uncompressed format
+					rawKey := elliptic.Marshal(ecKey.Curve, ecKey.X, ecKey.Y)
+					return curve.NewPublicKey(rawKey)
+				}
+			}
+		}
+		return nil, fmt.Errorf("invalid or unsupported ECDH key format: %v", err)
 	}
 
 	return nil, errors.New("unsupported key type")
@@ -144,12 +198,69 @@ func verifySignature(publicKey interface{}, data []byte, signature []byte) bool 
 	}
 }
 
+// Function to parse ECDH public key from raw bytes
+func parseECDHPublicKey(data []byte) (*ecdh.PublicKey, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty public key data")
+	}
+
+	// Try to parse it as a raw X.509 DER key first
+	curve := ecdh.P256()
+	return curve.NewPublicKey(data)
+}
+
+// Function to generate a new ECDH key pair
+func generateECDHKeyPair() (*ecdh.PrivateKey, error) {
+	curve := ecdh.P256()
+	return curve.GenerateKey(rand.Reader)
+}
+
+// Function to decrypt data with AES-GCM
+func decryptWithAES(symmetricKey, ciphertext []byte) ([]byte, error) {
+	if len(ciphertext) < 12+16 { // 12 bytes nonce + at least 16 bytes of ciphertext (including tag)
+		return nil, fmt.Errorf("ciphertext too short")
+	}
+
+	// Extract nonce from the first 12 bytes
+	nonce := ciphertext[:12]
+	ciphertext = ciphertext[12:]
+
+	block, err := aes.NewCipher(symmetricKey)
+	if err != nil {
+		return nil, err
+	}
+
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	plaintext, err := aesGCM.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decryption failed: %w", err)
+	}
+
+	return plaintext, nil
+}
+
+// Compute shared secret from ECDH key exchange
+func computeSharedSecret(privateKey *ecdh.PrivateKey, publicKey *ecdh.PublicKey) ([]byte, error) {
+	sharedSecret, err := privateKey.ECDH(publicKey)
+	if err != nil {
+		return nil, err
+	}
+
+	// Derive a suitable AES key from the shared secret
+	hash := sha256.Sum256(sharedSecret)
+	return hash[:], nil // Use the SHA-256 hash (32 bytes) as AES-256 key
+}
+
 // Add CORS headers helper function
 func setCORSHeaders(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-rpc-sec-dbcs-hw-pub, x-rpc-sec-dbcs-hw-pub-type, x-rpc-sec-dbcs-accel-pub, x-rpc-sec-dbcs-accel-pub-type, x-rpc-sec-dbcs-accel-pub-sig, x-rpc-sec-dbcs-data, x-rpc-sec-dbcs-data-sig, x-rpc-sec-dbcs-accel-pub-id")
-	w.Header().Set("Access-Control-Expose-Headers", "x-rpc-sec-dbcs-accel-pub-id")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-rpc-sec-dbcs-hw-pub, x-rpc-sec-dbcs-hw-pub-type, x-rpc-sec-dbcs-accel-pub, x-rpc-sec-dbcs-accel-pub-type, x-rpc-sec-dbcs-accel-pub-sig, x-rpc-sec-dbcs-data, x-rpc-sec-dbcs-data-sig, x-rpc-sec-dbcs-accel-pub-id, x-rpc-sec-dbcs-data-enc")
+	w.Header().Set("Access-Control-Expose-Headers", "x-rpc-sec-dbcs-accel-pub-id, x-rpc-sec-dbcs-accel-pub")
 }
 
 // Helper function for error response with CORS headers
@@ -272,6 +383,7 @@ func parseAndValidateKey(keyData string, keyType string, keyDesc string) (interf
 	return key, nil
 }
 
+// Central handler for both asymmetric and symmetric key registration
 func handleAccelKeyRegistration(w http.ResponseWriter, r *http.Request, hwKeyInfo PublicKeyInfo) {
 	// Verify acceleration key registration
 	accelPub := r.Header.Get("x-rpc-sec-dbcs-accel-pub")
@@ -291,72 +403,157 @@ func handleAccelKeyRegistration(w http.ResponseWriter, r *http.Request, hwKeyInf
 		return
 	}
 
-	// Generate and store acceleration key
+	// Generate key ID
 	accelKeyId, err := generateRandomString(16)
 	if err != nil {
 		errorResponse(w, "Failed to generate key ID", http.StatusInternalServerError)
 		return
 	}
 
-	accelKeys.Set(accelKeyId, PublicKeyInfo{
-		Key:  []byte(accelPub),
-		Type: KeyType(strings.ToLower(accelPubType)),
-	}, cache.DefaultExpiration)
+	// For ECDH key types, save hardware key for data verification
+	isECDH := strings.ToLower(accelPubType) == string(KeyTypeECDH)
 
-	// Use the newly registered key to verify the request
-	handleRegularRequestWithKey(w, r, accelPub, accelPubType, accelKeyId)
+	// Prepare the unified key info - for ECDH, store hardware key for data verification
+	unifiedKey := UnifiedKeyInfo{
+		PublicKey: []byte(accelPub),
+		KeyType:   KeyType(strings.ToLower(accelPubType)),
+	}
+
+	// For ECDH key types, perform key exchange and compute shared secret
+	if isECDH {
+		// Parse client's ECDH public key
+		clientECDHPub, err := parsePublicKey(accelPub, string(KeyTypeECDH))
+		if err != nil {
+			errorResponse(w, fmt.Sprintf("Invalid ECDH public key: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		// Generate server's ECDH key pair
+		serverECDHPriv, err := generateECDHKeyPair()
+		if err != nil {
+			errorResponse(w, "Failed to generate server ECDH key", http.StatusInternalServerError)
+			return
+		}
+
+		// Export server's public key for the client
+		serverPubKeyBytes := serverECDHPriv.PublicKey().Bytes()
+		serverPubKeyBase64 := base64.StdEncoding.EncodeToString(serverPubKeyBytes)
+
+		// Set the server's public key in the response header
+		w.Header().Set("x-rpc-sec-dbcs-accel-pub", serverPubKeyBase64)
+
+		// Compute the shared secret
+		clientPubKey, ok := clientECDHPub.(*ecdh.PublicKey)
+		if !ok {
+			errorResponse(w, "Invalid ECDH public key type", http.StatusBadRequest)
+			return
+		}
+
+		sharedSecret, err := computeSharedSecret(serverECDHPriv, clientPubKey)
+		if err != nil {
+			errorResponse(w, fmt.Sprintf("Failed to compute shared secret: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Save the symmetric key in the unified key info
+		unifiedKey.SymmetricKey = sharedSecret
+		unifiedKey.ServerPrivKey = serverECDHPriv
+	}
+
+	// Store the unified key with its ID
+	accelKeys.Set(accelKeyId, unifiedKey, cache.DefaultExpiration)
+
+	// Set the key ID in the response header
+	w.Header().Set("x-rpc-sec-dbcs-accel-pub-id", accelKeyId)
+
+	// For ECDH key exchange, validate request data using hardware key for this first request
+	if isECDH {
+		data := r.Header.Get("x-rpc-sec-dbcs-data")
+		dataSig := r.Header.Get("x-rpc-sec-dbcs-data-sig")
+
+		// Verify that we have the data and signature
+		if data == "" || dataSig == "" {
+			errorResponse(w, "Missing data or signature for verification", http.StatusBadRequest)
+			return
+		}
+
+		// Verify the data signature using the hardware key
+		if err := verifySignedData(hwKey, data, dataSig); err != nil {
+			errorResponse(w, fmt.Sprintf("Failed to verify data signature: %v", err), http.StatusUnauthorized)
+			return
+		}
+
+		// Data validation succeeded
+		setCORSHeaders(w)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"authenticated": true})
+	} else {
+		// For regular asymmetric keys, verify with the acceleration key
+		handleRequest(w, r, unifiedKey)
+	}
 }
 
-func handleRegularRequestWithKey(w http.ResponseWriter, r *http.Request, keyData string, keyType string, keyId string) {
-	dataSig := r.Header.Get("x-rpc-sec-dbcs-data-sig")
-	data := r.Header.Get("x-rpc-sec-dbcs-data")
+// Single handler for all authenticated requests
+func handleRequest(w http.ResponseWriter, r *http.Request, keyInfo UnifiedKeyInfo) {
+	// Check for encrypted data (symmetric) first
+	encryptedData := r.Header.Get("x-rpc-sec-dbcs-data-enc")
+	if encryptedData != "" && keyInfo.SymmetricKey != nil {
+		data := r.Header.Get("x-rpc-sec-dbcs-data")
 
-	if dataSig == "" || data == "" {
-		errorResponse(w, "Missing required headers", http.StatusBadRequest)
-		return
+		// Handle symmetric encryption case
+		encBytes, err := base64.StdEncoding.DecodeString(encryptedData)
+		if err != nil {
+			errorResponse(w, "Invalid encrypted data format", http.StatusBadRequest)
+			return
+		}
+
+		decrypted, err := decryptWithAES(keyInfo.SymmetricKey, encBytes)
+		if err != nil {
+			errorResponse(w, fmt.Sprintf("Failed to decrypt data: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		if !bytes.Equal(decrypted, []byte(data)) {
+			errorResponse(w, "Decrypted data does not match expected data", http.StatusUnauthorized)
+			return
+		}
+
+		// Symmetric decryption succeeded
+		log.Printf("Symmetric auth successful: %s", string(decrypted))
+	} else {
+		// Check for signed data (asymmetric)
+		dataSig := r.Header.Get("x-rpc-sec-dbcs-data-sig")
+		data := r.Header.Get("x-rpc-sec-dbcs-data")
+
+		if dataSig == "" || data == "" {
+			errorResponse(w, "Missing required headers for asymmetric verification", http.StatusBadRequest)
+			return
+		}
+
+		// Parse and validate acceleration public key
+		accelKey, err := parseAndValidateKey(string(keyInfo.PublicKey), string(keyInfo.KeyType), "acceleration key")
+		if err != nil {
+			errorResponse(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		// Verify request is signed by acceleration key
+		if err := verifySignedData(accelKey, data, dataSig); err != nil {
+			errorResponse(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		// Asymmetric verification succeeded
+		log.Printf("Asymmetric auth successful: %s", data)
 	}
 
-	// Parse and validate acceleration key
-	accelKey, err := parseAndValidateKey(keyData, keyType, "acceleration key")
-	if err != nil {
-		errorResponse(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-
-	// Verify request is signed by acceleration key
-	if err := verifySignedData(accelKey, data, dataSig); err != nil {
-		errorResponse(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-
-	// If this is a new key registration, include the key ID in response
-	if keyId != "" {
-		w.Header().Set("x-rpc-sec-dbcs-accel-pub-id", keyId)
-	}
-
+	// If authentication succeeded (either symmetric or asymmetric), return success
 	setCORSHeaders(w)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]bool{"authenticated": true})
 }
 
-func handleRegularRequest(w http.ResponseWriter, r *http.Request) {
-	accelPubId := r.Header.Get("x-rpc-sec-dbcs-accel-pub-id")
-	if accelPubId == "" {
-		errorResponse(w, "Missing acceleration key ID", http.StatusBadRequest)
-		return
-	}
-
-	// Get acceleration key
-	accelKeyInfo, found := accelKeys.Get(accelPubId)
-	if !found {
-		errorResponse(w, "Invalid acceleration key ID", http.StatusUnauthorized)
-		return
-	}
-	keyInfo := accelKeyInfo.(PublicKeyInfo)
-
-	handleRegularRequestWithKey(w, r, string(keyInfo.Key), string(keyInfo.Type), "")
-}
-
+// Main authentication handler
 func authenticatedHandler(w http.ResponseWriter, r *http.Request) {
 	setCORSHeaders(w)
 	if r.Method == "OPTIONS" {
@@ -379,18 +576,30 @@ func authenticatedHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	hwKeyInfo := tokenInfo.(PublicKeyInfo)
 
-	// Route to appropriate handler based on presence of headers
+	// Check if this is a key registration or using existing key
 	if r.Header.Get("x-rpc-sec-dbcs-accel-pub") != "" {
+		// This is a new key registration (either asymmetric or ECDH)
 		handleAccelKeyRegistration(w, r, hwKeyInfo)
 		return
 	}
 
-	if r.Header.Get("x-rpc-sec-dbcs-accel-pub-id") != "" {
-		handleRegularRequest(w, r)
+	// Check if this is using an existing key
+	accelKeyId := r.Header.Get("x-rpc-sec-dbcs-accel-pub-id")
+	if accelKeyId == "" {
+		errorResponse(w, "Missing acceleration key ID", http.StatusBadRequest)
 		return
 	}
 
-	errorResponse(w, "Invalid request: missing either acceleration key or key ID", http.StatusBadRequest)
+	// Get acceleration key
+	keyInfo, found := accelKeys.Get(accelKeyId)
+	if !found {
+		errorResponse(w, "Invalid acceleration key ID", http.StatusUnauthorized)
+		return
+	}
+	unifiedKey := keyInfo.(UnifiedKeyInfo)
+
+	// Handle the request with the existing key
+	handleRequest(w, r, unifiedKey)
 }
 
 func main() {

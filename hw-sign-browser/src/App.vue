@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue';
-import { register, login, logout, isAuthenticated as checkAuthService } from './services/authService';
+import { 
+  register, 
+  login, 
+  logout, 
+  isAuthenticated as checkAuthService, 
+  toggleSymmetricEncryption, 
+  isSymmetricEncryptionEnabled 
+} from './services/authService';
 
 const isAuthenticated = ref(false);
 const message = ref('');
@@ -8,6 +15,7 @@ const username = ref('');
 const password = ref('');
 const darkMode = ref(false);
 const isLoading = ref(false);
+const useSymmetric = ref(true);
 
 async function handleRegister() {
   if (!username.value || !password.value) {
@@ -70,11 +78,23 @@ async function checkAuthentication() {
   }
 }
 
+async function handleToggleEncryption() {
+  try {
+    useSymmetric.value = await toggleSymmetricEncryption();
+    message.value = `Encryption mode changed to ${useSymmetric.value ? 'symmetric (ECDH/AES)' : 'asymmetric (signature-based)'}`;
+  } catch (error) {
+    console.error('Failed to toggle encryption mode:', error);
+    message.value = 'Failed to change encryption mode';
+  }
+}
+
 // Move dark mode initialization to onMounted
 onMounted(async () => {
   // Check initial auth state
   try {
     isAuthenticated.value = await checkAuthService();
+    // Load encryption preference
+    useSymmetric.value = isSymmetricEncryptionEnabled();
   } catch (e) {
     console.debug('Initial auth check failed:', e);
   }
@@ -144,6 +164,12 @@ watch(darkMode, (newValue) => {
             class="bg-indigo-600 text-white py-2 px-4 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed w-full">
             Check Hardware Sign Status
           </button>
+          
+          <button @click="handleToggleEncryption"
+            class="bg-yellow-600 text-white py-2 px-4 rounded-lg hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 w-full">
+            {{ useSymmetric ? 'Using ECDH+AES (Faster)' : 'Using Asymmetric Signatures' }}
+          </button>
+          
           <button @click="handleLogout"
             class="bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 w-full">
             Logout
