@@ -97,6 +97,8 @@ function toggleDarkMode() {
 // Initialization
 onMounted(async () => {
   try {
+    isLoading.value = true;
+
     // Check initial auth state and load preferences
     isAuthenticated.value = await checkAuthService();
     useSymmetric.value = isSymmetricEncryptionEnabled();
@@ -112,6 +114,8 @@ onMounted(async () => {
     });
   } catch (e) {
     console.debug('Initial setup failed:', e);
+  } finally {
+    isLoading.value = false;
   }
 });
 
@@ -142,6 +146,17 @@ watch(darkMode, (newValue) => {
 
 <template>
   <div class="min-h-screen w-full flex items-center justify-center bg-gray-100 dark:bg-gray-900">
+    <!-- Loading overlay -->
+    <div v-if="isLoading" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+      <div class="bg-white dark:bg-gray-800 rounded-lg p-4 flex flex-col items-center shadow-lg">
+        <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+        <p class="mt-4 text-gray-700 dark:text-gray-300">Processing...</p>
+      </div>
+    </div>
+
     <div
       class="w-full max-w-lg bg-white dark:bg-gray-800 rounded-lg shadow-lg p-8 border border-gray-200 dark:border-gray-700">
       <h1 class="text-2xl font-bold text-center mb-6 text-gray-900 dark:text-gray-100">User Authentication</h1>
@@ -224,5 +239,22 @@ body {
 
 .btn-danger {
   @apply bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2;
+}
+
+/* Add styles for the loading overlay */
+.fixed {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.bg-opacity-50 {
+  background-color: rgba(0, 0, 0, 0.5);
+}
+
+.z-50 {
+  z-index: 50;
 }
 </style>

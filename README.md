@@ -16,6 +16,7 @@
 首选硬件绑定，当硬件安全不可用时，系统会降级：
 - Windows：系统版本过低，TPM 不存在或在 BIOS 中禁用
 - Android：系统版本过低，TEE 与 StrongBox 都不存在
+
 在这些情况下，登录态不受硬件密钥保护，不影响正常使用
 
 ### 流程解耦合
@@ -47,10 +48,8 @@
 ### 平台特定实现
 
 #### 浏览器（Web Crypto API）
-- 使用SubtleCrypto API
-- 算法降级链：ED25519 → ECDSA → RSA-PSS
-- 不可提取的硬件密钥生成
-- 基于内存的临时密钥管理
+- 使用 SubtleCrypto API
+- 基于 IndexedDB 的密钥引用存储（不导出）
 
 示例实现：`hw-sign-browser/src/services/authService.ts`
 
@@ -62,13 +61,13 @@
 
 #### Apple（安全隔区）
 - 使用 SecKey API
-- 安全隔区 (Security Enclave) 密钥存储
+- 基于安全隔区 (Security Enclave) 密钥存储
 
 示例实现：`hw-sign-apple/hw-sign-apple/Services/AuthService.swift`
 
 #### Android（Keystore）
 - 使用 Android Keystore API
-- TEE / StrongBox 密钥存储
+- 基于 TEE / StrongBox 密钥存储
 
 示例实现：`hw-sign-android/app/src/main/java/fan/ovo/hwsign/AuthService.kt`
 
