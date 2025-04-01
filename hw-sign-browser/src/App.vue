@@ -69,7 +69,7 @@ async function checkAuthentication() {
 async function handleToggleEncryption() {
   try {
     useSymmetric.value = await toggleSymmetricEncryption();
-    message.value = `Encryption mode changed to ${useSymmetric.value ? 'symmetric (ECDH/AES)' : 'asymmetric (signature-based)'}`;
+    message.value = `Encryption mode changed to ${useSymmetric.value ? 'symmetric (ECDH/HMAC)' : 'asymmetric (signature-based)'}`;
   } catch (error) {
     console.error('Failed to toggle encryption mode:', error);
     message.value = 'Failed to change encryption mode';
@@ -179,7 +179,7 @@ watch(darkMode, (newValue) => {
           </button>
 
           <button @click="handleToggleEncryption" class="btn-yellow w-full">
-            {{ useSymmetric ? 'Using ECDH+AES (Faster)' : 'Using Asymmetric Signatures' }}
+            {{ useSymmetric ? 'Using ECDH+HMAC (Faster)' : 'Using Asymmetric Signatures' }}
           </button>
 
           <button @click="handleLogout" class="btn-danger w-full">

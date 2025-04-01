@@ -61,6 +61,12 @@ var (
 	tokensCache = cache.New(defaultCacheExpiry, cleanupInterval) // Cache for tokens and associated hardware keys
 )
 
+// Custom logger for debugging
+func debugLog(step string, format string, v ...interface{}) {
+	message := fmt.Sprintf(format, v...)
+	log.Printf("[DEBUG] %s: %s", step, message)
+}
+
 // ============ Crypto Utility Functions ============
 
 // Generate cryptographically secure random string
@@ -74,6 +80,7 @@ func generateRandomString(n int) (string, error) {
 
 // Parse public key from base64 encoded string based on key type
 func parsePublicKey(keyData string, keyType string) (interface{}, error) {
+	debugLog("parsePublicKey", "Parsing %s key, length: %d", keyType, len(keyData))
 	decoded, err := base64.StdEncoding.DecodeString(keyData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode key: %w", err)
@@ -230,6 +237,7 @@ func generateECDHKeyPair() (*ecdh.PrivateKey, error) {
 
 // Validate request with HMAC
 func validateHMACRequest(symmetricKey []byte, data, sig string) error {
+	debugLog("HMAC", "Validating HMAC for data (%d chars)", len(data))
 	if sig == "" {
 		return errors.New("missing HMAC signature")
 	}
@@ -267,6 +275,7 @@ func validateHMACRequest(symmetricKey []byte, data, sig string) error {
 
 // Compute shared secret from ECDH key exchange
 func computeSharedSecret(privateKey *ecdh.PrivateKey, publicKey *ecdh.PublicKey) ([]byte, error) {
+	debugLog("ECDH", "Computing shared secret between keys")
 	sharedSecret, err := privateKey.ECDH(publicKey)
 	if err != nil {
 		return nil, err
@@ -334,6 +343,7 @@ func parseAndValidateKey(keyData string, keyType string, keyDesc string) (interf
 
 // Register new user
 func registerHandler(w http.ResponseWriter, r *http.Request) {
+	debugLog("registerHandler", "Received registration request from %s", r.RemoteAddr)
 	setCORSHeaders(w)
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
@@ -361,6 +371,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 
 // Login and get auth token
 func loginHandler(w http.ResponseWriter, r *http.Request) {
+	debugLog("loginHandler", "Received login request from %s", r.RemoteAddr)
 	setCORSHeaders(w)
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
@@ -423,6 +434,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 
 // Handle acceleration key registration (both asymmetric and ECDH)
 func verifyAccelKeyRegistrationRequest(w http.ResponseWriter, r *http.Request, hwKeyInfo PublicKeyInfo) error {
+	debugLog("verifyAccelKeyRegistration", "Processing new acceleration key registration, type: %s", hwKeyInfo.Type)
 	// Verify acceleration key registration
 	accelPub := r.Header.Get("x-rpc-sec-dbcs-accel-pub")
 	accelPubType := r.Header.Get("x-rpc-sec-dbcs-accel-pub-type")
@@ -481,6 +493,7 @@ func verifyAccelKeyRegistrationRequest(w http.ResponseWriter, r *http.Request, h
 
 // Setup ECDH key exchange
 func setupECDHExchange(w http.ResponseWriter, accelPub string, unifiedKey *UnifiedKeyInfo) error {
+	debugLog("ECDH", "Setting up ECDH key exchange, client pubkey length: %d", len(accelPub))
 	// Parse client's ECDH public key
 	clientECDHPub, err := parsePublicKey(accelPub, string(KeyTypeECDH))
 	if err != nil {
@@ -509,6 +522,8 @@ func setupECDHExchange(w http.ResponseWriter, accelPub string, unifiedKey *Unifi
 		return fmt.Errorf("failed to compute shared secret: %v", err)
 	}
 
+	debugLog("ECDH", "Shared secret computed, length: %d bytes", len(sharedSecret))
+
 	// Save the symmetric key in the unified key info
 	unifiedKey.SymmetricKey = sharedSecret
 	unifiedKey.ServerPrivKey = serverECDHPriv
@@ -518,12 +533,13 @@ func setupECDHExchange(w http.ResponseWriter, accelPub string, unifiedKey *Unifi
 
 // Verify authenticated requests
 func verifyRequest(w http.ResponseWriter, r *http.Request, keyInfo UnifiedKeyInfo) error {
+	debugLog("verifyRequest", "Verifying request, key type: %s, has symmetric key: %v", keyInfo.KeyType, keyInfo.SymmetricKey != nil)
+
 	// Get data and signature from request
 	data := r.Header.Get("x-rpc-sec-dbcs-data")
 	dataSig := r.Header.Get("x-rpc-sec-dbcs-data-sig")
 
-	// Log the full request headers for debugging
-	log.Printf("Request debug - headers: %+v", r.Header)
+	debugLog("verifyRequest", "Request data: %s, signature length: %d", data, len(dataSig))
 
 	// Special case for ECDH initial requests
 	if keyInfo.KeyType == KeyTypeECDH && keyInfo.HwKey != nil {
@@ -547,6 +563,7 @@ func verifyRequest(w http.ResponseWriter, r *http.Request, keyInfo UnifiedKeyInf
 	}
 
 	if dataSig != "" && keyInfo.SymmetricKey != nil {
+		debugLog("verifyRequest", "Using HMAC validation with symmetric key, length: %d", len(keyInfo.SymmetricKey))
 		// Handle HMAC case
 		if err := validateHMACRequest(keyInfo.SymmetricKey, data, dataSig); err != nil {
 			log.Printf("HMAC validation failed: %v", err)
@@ -555,6 +572,7 @@ func verifyRequest(w http.ResponseWriter, r *http.Request, keyInfo UnifiedKeyInf
 		}
 		log.Printf("HMAC auth successful: %s", data)
 	} else {
+		debugLog("verifyRequest", "Using asymmetric signature validation")
 		// Handle asymmetric signature case
 		if err := validateAsymmetricRequest(keyInfo, data, dataSig); err != nil {
 			errorResponse(w, err.Error(), http.StatusUnauthorized)
@@ -569,6 +587,7 @@ func verifyRequest(w http.ResponseWriter, r *http.Request, keyInfo UnifiedKeyInf
 
 // Validate request with asymmetric signature
 func validateAsymmetricRequest(keyInfo UnifiedKeyInfo, data, dataSig string) error {
+	debugLog("asymmetricValidation", "Validating asymmetric signature, key type: %s", keyInfo.KeyType)
 	if data == "" || dataSig == "" {
 		return errors.New("missing required headers for asymmetric verification")
 	}
@@ -589,8 +608,8 @@ func validateAsymmetricRequest(keyInfo UnifiedKeyInfo, data, dataSig string) err
 
 // Handle request using an existing key
 func verifyExistingKeyRequest(w http.ResponseWriter, r *http.Request) error {
-	// Check for key ID
 	accelKeyId := r.Header.Get("x-rpc-sec-dbcs-accel-pub-id")
+	debugLog("verifyExistingKey", "Verifying request with existing key ID: %s", accelKeyId)
 	if accelKeyId == "" {
 		errorResponse(w, "Missing acceleration key ID", http.StatusBadRequest)
 		return errors.New("missing acceleration key ID")
@@ -610,6 +629,7 @@ func verifyExistingKeyRequest(w http.ResponseWriter, r *http.Request) error {
 
 // Main endpoint for all authenticated requests
 func authenticatedHandler(w http.ResponseWriter, r *http.Request) {
+	debugLog("authenticatedHandler", "Received authenticated request from %s, method: %s", r.RemoteAddr, r.Method)
 	setCORSHeaders(w)
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
@@ -633,6 +653,7 @@ func authenticatedHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Handle either key registration or regular request
 	if r.Header.Get("x-rpc-sec-dbcs-accel-pub") != "" {
+		debugLog("authenticatedHandler", "Request includes new acceleration key")
 		// This is a new key registration (either asymmetric or ECDH)
 		err = verifyAccelKeyRegistrationRequest(w, r, hwKeyInfo)
 		if err != nil {
@@ -640,6 +661,7 @@ func authenticatedHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		debugLog("authenticatedHandler", "Request uses existing key")
 		// Handle request with existing key
 		err = verifyExistingKeyRequest(w, r)
 		if err != nil {
@@ -654,6 +676,7 @@ func authenticatedHandler(w http.ResponseWriter, r *http.Request) {
 
 // Extract and validate the authorization token
 func extractAndValidateToken(r *http.Request) (string, error) {
+	debugLog("tokenValidation", "Extracting token from Authorization header")
 	authHeader := r.Header.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
 		return "", errors.New("invalid authorization header")
@@ -666,6 +689,6 @@ func main() {
 	http.HandleFunc("/login", loginHandler)
 	http.HandleFunc("/authenticated", authenticatedHandler)
 
-	log.Println("Starting server on :28280")
+	debugLog("main", "Server starting on port 28280")
 	log.Fatal(http.ListenAndServe(":28280", nil))
 }
