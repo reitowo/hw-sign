@@ -29,10 +29,10 @@
 #### 硬件密钥（设备绑定）
 - 存储在硬件中的不可提取密码学密钥对
 - 每个登录会话都生成新的密钥
-- 专用于签署加速密钥
+- 专用于签署临时密钥
 - 与登录态关联，而非用户账户
 
-#### 加速密钥（仅存储于内存）
+#### 临时密钥（仅存储于内存）
 - 仅存储于内存的密码学密钥对，用于提高性能
 - 由硬件密钥签名以验证真实性
 - 用于常规 API 请求签名
@@ -50,7 +50,7 @@
 - 使用SubtleCrypto API
 - 算法降级链：ED25519 → ECDSA → RSA-PSS
 - 不可提取的硬件密钥生成
-- 基于内存的加速密钥管理
+- 基于内存的临时密钥管理
 
 示例实现：`hw-sign-browser/src/services/authService.ts`
 
@@ -109,16 +109,16 @@
    - `x-rpc-sec-dbcs-data`: 请求数据哈希/时间戳
    - `x-rpc-sec-dbcs-data-sig`: 请求签名
 
-   对于新加速密钥:
-   - `x-rpc-sec-dbcs-accel-pub`: 加速公钥
+   对于新临时密钥:
+   - `x-rpc-sec-dbcs-accel-pub`: 临时公钥
    - `x-rpc-sec-dbcs-accel-pub-type`: 密钥算法
-   - `x-rpc-sec-dbcs-accel-pub-sig`: 硬件签名的加速密钥
+   - `x-rpc-sec-dbcs-accel-pub-sig`: 硬件签名的临时密钥
 
-   新加速密钥时的响应头:
-   - `x-rpc-sec-dbcs-accel-pub-id`: 新加速密钥ID
+   新临时密钥时的响应头:
+   - `x-rpc-sec-dbcs-accel-pub-id`: 新临时密钥ID
 
    对于现有密钥:
-   - `x-rpc-sec-dbcs-accel-pub-id`: 加速密钥ID
+   - `x-rpc-sec-dbcs-accel-pub-id`: 临时密钥ID
 
 ### 请求签名
 
@@ -139,6 +139,25 @@
    - 设置较短的过期窗口
    - 最简单，安全性略低
 
+### 性能优化
+
+对于性能敏感场景，可以通过生成 ECDH 类型的临时密钥，并协商出仅在内存中的对称密钥，使用 HMAC-SHA256 对 `x-rpc-sec-dbcs-data` 进行签名，以取得一样的效果。
+
+参考参数：
+
+在新的临时协商密钥对生成时：
+- `x-rpc-sec-dbcs-accel-pub`: 客户端临时协商公钥全文
+- `x-rpc-sec-dbcs-accel-pub-type`: 客户端临时协商公钥类型：ecdh
+- `x-rpc-sec-dbcs-accel-pub-sig`: 客户端临时协商公钥用硬件密钥对生成的签名
+
+服务端返回新的临时协商公钥时：
+- `x-rpc-sec-dbcs-accel-pub`: 服务端临时协商公钥全文
+- `x-rpc-sec-dbcs-accel-pub-id`: 临时协商公钥 ID，指向协商后的对称密钥
+
+请求时的签名参数：
+- `x-rpc-sec-dbcs-data`: 随机字符串 / 请求体 SHA256 / 时间戳
+- `x-rpc-sec-dbcs-data-sig`: 对上面任意一项，使用协商密钥生成的 HMAC 或临时密钥生成的签名
+- `x-rpc-sec-dbcs-accel-pub-id`: 临时公钥 ID
 
 ## 示例
 

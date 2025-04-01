@@ -3,12 +3,11 @@ package main
 import (
 	"bytes"
 	"crypto"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -20,7 +19,6 @@ import (
 	"log"
 	"math/big"
 	"net/http"
-	"reflect"
 	"strings"
 	"time"
 
@@ -48,6 +46,7 @@ type UnifiedKeyInfo struct {
 	KeyType       KeyType     // Type of key (ecdsa, rsa-pss, ed25519)
 	SymmetricKey  []byte      // AES-256 key for symmetric encryption (if available)
 	ServerPrivKey interface{} // Server's private key for ECDH (if applicable)
+	HwKey         interface{}
 }
 
 // In-memory caches with consistent expiration times
@@ -229,54 +228,41 @@ func generateECDHKeyPair() (*ecdh.PrivateKey, error) {
 
 // ============ AES Encryption Functions ============
 
-// Decrypt data with AES-GCM
-func decryptWithAES(symmetricKey, ciphertext []byte) ([]byte, error) {
-	if len(ciphertext) < 12+16 { // 12 bytes nonce + at least 16 bytes of ciphertext (including tag)
-		return nil, fmt.Errorf("ciphertext too short")
+// Validate request with HMAC
+func validateHMACRequest(symmetricKey []byte, data, sig string) error {
+	if sig == "" {
+		return errors.New("missing HMAC signature")
 	}
 
-	// Extract nonce from the first 12 bytes
-	nonce := ciphertext[:12]
-	ciphertext = ciphertext[12:]
+	// Log the input for debugging
+	log.Printf("HMAC debug - data: %s, sig: %s", data, sig)
 
-	block, err := aes.NewCipher(symmetricKey)
+	// Compute HMAC using SHA-256
+	mac := hmac.New(sha256.New, symmetricKey)
+	mac.Write([]byte(data))
+	expectedHMAC := mac.Sum(nil)
+	expectedBase64 := base64.StdEncoding.EncodeToString(expectedHMAC)
+
+	// Debug info
+	log.Printf("HMAC debug - computed base64: %s", expectedBase64)
+
+	// Decode the received signature
+	sigBytes, err := base64.StdEncoding.DecodeString(sig)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("invalid HMAC format: %w", err)
 	}
 
-	aesGCM, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
+	// Compare both ways for debugging
+	log.Printf("HMAC debug - bytes equal: %v", bytes.Equal(sigBytes, expectedHMAC))
+	log.Printf("HMAC debug - base64 equal: %v", sig == expectedBase64)
+
+	// Compare the HMACs
+	if !bytes.Equal(sigBytes, expectedHMAC) {
+		// Return more information for debugging
+		return fmt.Errorf("HMAC mismatch: expected %s, got %s", expectedBase64, sig)
 	}
 
-	plaintext, err := aesGCM.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, fmt.Errorf("decryption failed: %w", err)
-	}
-
-	return plaintext, nil
-}
-
-// Encrypt data with AES-GCM
-func encryptWithAES(symmetricKey, plaintext []byte) ([]byte, error) {
-	block, err := aes.NewCipher(symmetricKey)
-	if err != nil {
-		return nil, err
-	}
-
-	aesGCM, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	nonce := make([]byte, 12) // Standard nonce size for GCM
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
-
-	// Encrypt and include nonce at the beginning
-	ciphertext := aesGCM.Seal(nonce, nonce, plaintext, nil)
-	return ciphertext, nil
+	return nil
 }
 
 // Compute shared secret from ECDH key exchange
@@ -286,9 +272,11 @@ func computeSharedSecret(privateKey *ecdh.PrivateKey, publicKey *ecdh.PublicKey)
 		return nil, err
 	}
 
-	// Derive a suitable AES key from the shared secret
-	hash := sha256.Sum256(sharedSecret)
-	return hash[:], nil // Use the SHA-256 hash (32 bytes) as AES-256 key
+	// Log for debugging
+	log.Printf("HMAC debug - derived key hash: %s", base64.StdEncoding.EncodeToString(sharedSecret[:]))
+
+	// The derived secret should be 32 bytes for P-256 curve
+	return sharedSecret[:], nil
 }
 
 // ============ HTTP Helper Functions ============
@@ -297,7 +285,7 @@ func computeSharedSecret(privateKey *ecdh.PrivateKey, publicKey *ecdh.PublicKey)
 func setCORSHeaders(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-rpc-sec-dbcs-hw-pub, x-rpc-sec-dbcs-hw-pub-type, x-rpc-sec-dbcs-accel-pub, x-rpc-sec-dbcs-accel-pub-type, x-rpc-sec-dbcs-accel-pub-sig, x-rpc-sec-dbcs-data, x-rpc-sec-dbcs-data-sig, x-rpc-sec-dbcs-accel-pub-id, x-rpc-sec-dbcs-data-enc")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-rpc-sec-dbcs-hw-pub, x-rpc-sec-dbcs-hw-pub-type, x-rpc-sec-dbcs-accel-pub, x-rpc-sec-dbcs-accel-pub-type, x-rpc-sec-dbcs-accel-pub-sig, x-rpc-sec-dbcs-data, x-rpc-sec-dbcs-data-sig, x-rpc-sec-dbcs-accel-pub-id")
 	w.Header().Set("Access-Control-Expose-Headers", "x-rpc-sec-dbcs-accel-pub-id, x-rpc-sec-dbcs-accel-pub")
 }
 
@@ -484,7 +472,7 @@ func verifyAccelKeyRegistrationRequest(w http.ResponseWriter, r *http.Request, h
 	// Process this initial request with hardware key context if it's ECDH
 	if isECDH {
 		// Add hardware key to the unified key for ECDH initial validation
-		unifiedKey.ServerPrivKey = hwKey // Using ServerPrivKey field to store hwKey temporarily
+		unifiedKey.HwKey = hwKey
 	}
 
 	// For both ECDH and regular asymmetric keys, handle the request
@@ -532,14 +520,15 @@ func setupECDHExchange(w http.ResponseWriter, accelPub string, unifiedKey *Unifi
 func verifyRequest(w http.ResponseWriter, r *http.Request, keyInfo UnifiedKeyInfo) error {
 	// Get data and signature from request
 	data := r.Header.Get("x-rpc-sec-dbcs-data")
-	encryptedData := r.Header.Get("x-rpc-sec-dbcs-data-enc")
 	dataSig := r.Header.Get("x-rpc-sec-dbcs-data-sig")
 
-	// Special case for ECDH initial requests (keyInfo.ServerPrivKey contains the hardware key)
-	if keyInfo.KeyType == KeyTypeECDH && keyInfo.ServerPrivKey != nil &&
-		reflect.TypeOf(keyInfo.ServerPrivKey).String() != "*ecdh.PrivateKey" {
+	// Log the full request headers for debugging
+	log.Printf("Request debug - headers: %+v", r.Header)
+
+	// Special case for ECDH initial requests
+	if keyInfo.KeyType == KeyTypeECDH && keyInfo.HwKey != nil {
 		// This is an initial ECDH request that should be verified with hardware key
-		hwKey := keyInfo.ServerPrivKey
+		hwKey := keyInfo.HwKey
 
 		// Verify that we have the data and signature
 		if data == "" || dataSig == "" {
@@ -557,14 +546,14 @@ func verifyRequest(w http.ResponseWriter, r *http.Request, keyInfo UnifiedKeyInf
 		return nil
 	}
 
-	// Regular request processing
-	if encryptedData != "" && keyInfo.SymmetricKey != nil {
-		// Handle symmetric encryption case
-		if err := validateSymmetricRequest(keyInfo.SymmetricKey, encryptedData, data); err != nil {
+	if dataSig != "" && keyInfo.SymmetricKey != nil {
+		// Handle HMAC case
+		if err := validateHMACRequest(keyInfo.SymmetricKey, data, dataSig); err != nil {
+			log.Printf("HMAC validation failed: %v", err)
 			errorResponse(w, err.Error(), http.StatusUnauthorized)
 			return err
 		}
-		log.Printf("Symmetric auth successful: %s", data)
+		log.Printf("HMAC auth successful: %s", data)
 	} else {
 		// Handle asymmetric signature case
 		if err := validateAsymmetricRequest(keyInfo, data, dataSig); err != nil {
@@ -575,31 +564,6 @@ func verifyRequest(w http.ResponseWriter, r *http.Request, keyInfo UnifiedKeyInf
 	}
 
 	// Authentication succeeded
-	return nil
-}
-
-// Validate request with symmetric encryption
-func validateSymmetricRequest(symmetricKey []byte, encryptedData, expectedData string) error {
-	if encryptedData == "" {
-		return errors.New("missing encrypted data")
-	}
-
-	// Decode and decrypt
-	encBytes, err := base64.StdEncoding.DecodeString(encryptedData)
-	if err != nil {
-		return fmt.Errorf("invalid encrypted data format: %w", err)
-	}
-
-	decrypted, err := decryptWithAES(symmetricKey, encBytes)
-	if err != nil {
-		return fmt.Errorf("failed to decrypt data: %w", err)
-	}
-
-	// Verify the decrypted data matches the expected data
-	if expectedData != "" && !bytes.Equal(decrypted, []byte(expectedData)) {
-		return errors.New("decrypted data does not match expected data")
-	}
-
 	return nil
 }
 

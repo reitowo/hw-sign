@@ -14,8 +14,7 @@ interface AuthResponse extends ServerResponse {
 }
 
 const apiClient = axios.create({
-  // baseURL: 'https://dbcs-api.ovo.fan',
-  baseURL: 'http://127.0.0.1:28280',
+  baseURL: import.meta.env.DEV ? 'http://127.0.0.1:28280' : 'https://dbcs-api.ovo.fan',
   headers: { 'Content-Type': 'application/json' },
 });
 
@@ -218,35 +217,26 @@ async function exportPublicKey(key: CryptoKey): Promise<string> {
   return arrayBufferToBase64(exported);
 }
 
-// AES encryption for ECDH-derived keys
-async function encryptWithAES(key: CryptoKey, data: string): Promise<string> {
+// HMAC generation for ECDH-derived keys
+async function generateHMAC(key: CryptoKey, data: string): Promise<string> {
   const encoder = new TextEncoder();
   const dataBuffer = encoder.encode(data);
-  
-  // Generate a random 12-byte nonce
-  const nonce = window.crypto.getRandomValues(new Uint8Array(12));
-  
-  // Encrypt the data
-  const ciphertext = await window.crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: nonce },
+
+  const signature = await window.crypto.subtle.sign(
+    { name: 'HMAC' },
     key,
     dataBuffer
   );
-  
-  // Combine the nonce and ciphertext
-  const result = new Uint8Array(nonce.length + ciphertext.byteLength);
-  result.set(nonce, 0);
-  result.set(new Uint8Array(ciphertext), nonce.length);
-  
-  return arrayBufferToBase64(result);
+
+  return arrayBufferToBase64(signature);
 }
 
-// Function to derive shared secret and create symmetric key
+// Function to derive shared secret and create HMAC key
 async function deriveSharedKey(privateKey: CryptoKey, publicKeyBase64: string): Promise<CryptoKey> {
   try {
     // Import the server's public key
     const publicKeyData = base64ToArrayBuffer(publicKeyBase64);
-    
+
     // Import the raw key data for ECDH
     const serverPublicKey = await window.crypto.subtle.importKey(
       'raw',
@@ -255,28 +245,25 @@ async function deriveSharedKey(privateKey: CryptoKey, publicKeyBase64: string): 
       false,
       []
     );
-    
+
     // Derive bits from the ECDH exchange
     const derivedBits = await window.crypto.subtle.deriveBits(
       { name: 'ECDH', public: serverPublicKey },
       privateKey,
-      256 // 256 bits for AES-256
+      256 // 256 bits for HMAC key
     );
-    
-    // Hash the derived bits for better security
-    const hash = await window.crypto.subtle.digest('SHA-256', derivedBits);
-    
-    // Create AES-GCM key from the derived bits
+
+    // Create HMAC key from the derived bits
     return await window.crypto.subtle.importKey(
       'raw',
-      hash,
-      { name: 'AES-GCM', length: 256 },
+      derivedBits,
+      { name: 'HMAC', hash: 'SHA-256' },
       false,
-      ['encrypt', 'decrypt']
+      ['sign', 'verify']
     );
   } catch (error) {
     console.error('Failed to derive shared key:', error);
-    throw new Error('Failed to derive symmetric key');
+    throw new Error('Failed to derive HMAC key');
   }
 }
 
@@ -450,18 +437,20 @@ async function authenticatedRequest<T>(
 // Helper for existing key authentication
 async function handleExistingKeyAuth(headers: Record<string, string>, requestData: string): Promise<void> {
   if (symmetricKey && preferSymmetricEncryption) {
-    // Use symmetric encryption with AES
-    const encryptedData = await encryptWithAES(symmetricKey, requestData);
-    
+    // Use HMAC for authentication
+    const hmac = await generateHMAC(symmetricKey, requestData);
+    console.log(`hmac data: ${requestData}, signature: ${hmac}`);
+
     headers['x-rpc-sec-dbcs-data'] = requestData;
-    headers['x-rpc-sec-dbcs-data-enc'] = encryptedData;
+    headers['x-rpc-sec-dbcs-data-sig'] = hmac; // Unified header for signature
     headers['x-rpc-sec-dbcs-accel-pub-id'] = accelerationKeyId!;
   } else if (accelerationKey) {
     // Use asymmetric signatures
     const signature = await signWithKey(accelerationKey.privateKey, requestData);
+    console.log(`hmac data: ${requestData}, signature: ${signature}`);
     
     headers['x-rpc-sec-dbcs-data'] = requestData;
-    headers['x-rpc-sec-dbcs-data-sig'] = signature;
+    headers['x-rpc-sec-dbcs-data-sig'] = signature; // Unified header for signature
     headers['x-rpc-sec-dbcs-accel-pub-id'] = accelerationKeyId!;
   } else {
     // Invalid state, clear and force new registration
@@ -520,11 +509,11 @@ async function processKeyRegistrationResponse(headers: Record<string, string>): 
     const serverPubKey = headers['x-rpc-sec-dbcs-accel-pub'];
     if (ecdhAccelerationKey && serverPubKey && preferSymmetricEncryption) {
       try {
-        // Derive the shared secret and create the symmetric key
+        // Derive the shared secret and create the HMAC key
         symmetricKey = await deriveSharedKey(ecdhAccelerationKey.privateKey, serverPubKey);
-        console.debug('ECDH key exchange successful, symmetric encryption enabled');
+        console.debug('ECDH key exchange successful, HMAC authentication enabled');
       } catch (error) {
-        console.error('Failed to establish symmetric key:', error);
+        console.error('Failed to establish HMAC key:', error);
       }
     }
   }
