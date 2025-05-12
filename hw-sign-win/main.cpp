@@ -30,7 +30,7 @@ void printAvailableAlgorithms() {
     NCryptAlgorithmName *pAlgList = nullptr;
     SECURITY_STATUS status = NCryptEnumAlgorithms(
         hProvider,
-        NCRYPT_ASYMMETRIC_ENCRYPTION_OPERATION | NCRYPT_SIGNATURE_OPERATION,
+        NCRYPT_ASYMMETRIC_ENCRYPTION_OPERATION| NCRYPT_SECRET_AGREEMENT_OPERATION | NCRYPT_SIGNATURE_OPERATION,
         &dwAlgCount,
         &pAlgList,
         0);
