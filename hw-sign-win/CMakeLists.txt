@@ -20,3 +20,7 @@ target_link_libraries(hw_sign_win PRIVATE
     nlohmann_json::nlohmann_json
     bcrypt
 )
+
+find_package(OpenSSL REQUIRED)
+target_link_libraries(hw_sign_win PRIVATE OpenSSL::SSL)
+target_link_libraries(hw_sign_win PRIVATE OpenSSL::Crypto)

@@ -14,12 +14,24 @@
 #include <ctime>
 #include <nlohmann/json.hpp>
 
+#include <openssl/ec.h>
+#include <openssl/pem.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/sha.h>
+#include <string.h>
+#include <stdio.h>
+
 #pragma comment(lib, "ncrypt.lib")
 #pragma comment(lib, "bcrypt.lib")
 #pragma comment(lib, "crypt32.lib") // For CryptEncodeObjectEx and related functions
 
+bool SupportsVBSBasedKeys();
+
 // Function to enumerate and print all available algorithms
 void printAvailableAlgorithms() {
+    std::cout << "Support VBS based keys: " << SupportsVBSBasedKeys() << std::endl;
+
     NCRYPT_PROV_HANDLE hProvider = 0;
     if (NCryptOpenStorageProvider(&hProvider, MS_PLATFORM_KEY_STORAGE_PROVIDER, 0) != ERROR_SUCCESS) {
         std::cerr << "Failed to open key storage provider" << std::endl;
@@ -27,10 +39,10 @@ void printAvailableAlgorithms() {
     }
 
     DWORD dwAlgCount = 0;
-    NCryptAlgorithmName *pAlgList = nullptr;
+    NCryptAlgorithmName* pAlgList = nullptr;
     SECURITY_STATUS status = NCryptEnumAlgorithms(
         hProvider,
-        NCRYPT_ASYMMETRIC_ENCRYPTION_OPERATION| NCRYPT_SECRET_AGREEMENT_OPERATION | NCRYPT_SIGNATURE_OPERATION,
+        NCRYPT_ASYMMETRIC_ENCRYPTION_OPERATION | NCRYPT_SECRET_AGREEMENT_OPERATION | NCRYPT_SIGNATURE_OPERATION,
         &dwAlgCount,
         &pAlgList,
         0);
@@ -88,7 +100,7 @@ public:
 };
 
 // Helper function for base64 encoding
-std::string base64Encode(const std::vector<uint8_t> &data) {
+std::string base64Encode(const std::vector<uint8_t>& data) {
     static constexpr std::string_view ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string result((data.size() + 2) / 3 * 4, '=');
     size_t outPos = 0;
@@ -116,7 +128,7 @@ std::vector<uint8_t> base64Decode(std::string_view input) {
 
     uint32_t val = 0;
     int valb = -8;
-    for (char c: input) {
+    for (char c : input) {
         if (T[c] == -1) break;
         val = (val << 6) + T[c];
         valb += 6;
@@ -129,13 +141,123 @@ std::vector<uint8_t> base64Decode(std::string_view input) {
     return result;
 }
 
+bool SupportsVBSBasedKeys() {
+    SECURITY_STATUS status;
+    NCRYPT_PROV_HANDLE prov = 0;
+    NCRYPT_KEY_HANDLE key = 0;
+    auto name = L"fun.reito.hw-sign.vbs.check";
+
+    if (NCryptOpenStorageProvider(&prov, MS_KEY_STORAGE_PROVIDER, 0) != ERROR_SUCCESS) {
+        return false;
+    }
+
+    // status = NCryptOpenKey(prov, &key, name, 0, 0);
+    // if (status == ERROR_SUCCESS) {
+    //     std::cout << "key exist, ";
+    //
+    //     // First, get the NCrypt key handle properties
+    //     LPCWSTR keyBlobType = BCRYPT_ECCPUBLIC_BLOB;
+    //     DWORD keyBlobSize = 0;
+    //     SECURITY_STATUS status;
+    //
+    //     // Convert BCrypt key to CryptoAPI key
+    //     // For ECDSA, convert to CERT_PUBLIC_KEY_INFO using CAPI2
+    //     DWORD cbPublicKeyInfo = 0;
+    //     CERT_PUBLIC_KEY_INFO* pInfo = nullptr;
+    //
+    //     // First query the size
+    //     if (!CryptExportPublicKeyInfoEx(
+    //         key, 0,
+    //         X509_ASN_ENCODING,
+    //         nullptr,
+    //         0,
+    //         nullptr,
+    //         nullptr,
+    //         &cbPublicKeyInfo)) {
+    //         DWORD dwError = GetLastError();
+    //         throw std::runtime_error("Failed to export public key info size: " + std::to_string(dwError));
+    //     }
+    //
+    //     // Allocate memory for public key info
+    //     pInfo = (CERT_PUBLIC_KEY_INFO*)LocalAlloc(LPTR, cbPublicKeyInfo);
+    //     if (!pInfo) {
+    //         throw std::runtime_error("Memory allocation failed");
+    //     }
+    //
+    //     // Export the public key info
+    //     if (!CryptExportPublicKeyInfoEx(
+    //         key, 0,
+    //         X509_ASN_ENCODING,
+    //         nullptr,
+    //         0,
+    //         nullptr,
+    //         pInfo,
+    //         &cbPublicKeyInfo)) {
+    //         DWORD dwError = GetLastError();
+    //         LocalFree(pInfo);
+    //         throw std::runtime_error("Failed to export public key info: " + std::to_string(dwError));
+    //     }
+    //
+    //     // Now encode the public key info to DER
+    //     DWORD cbEncoded = 0;
+    //     uint8_t* pbEncoded = nullptr;
+    //     if (!CryptEncodeObjectEx(
+    //         X509_ASN_ENCODING, X509_PUBLIC_KEY_INFO, pInfo, CRYPT_ENCODE_ALLOC_FLAG,
+    //         nullptr, &pbEncoded, &cbEncoded)) {
+    //         DWORD dwError = GetLastError();
+    //         LocalFree(pInfo);
+    //         throw std::runtime_error("Failed to encode public key: " + std::to_string(dwError));
+    //     }
+    //
+    //     // Allocate new buffer with correct size and copy the encoded key
+    //     std::vector<uint8_t> encodedKey(cbEncoded);
+    //     memcpy(encodedKey.data(), pbEncoded, cbEncoded);
+    //
+    //     // Clean up
+    //     LocalFree(pInfo);
+    //
+    //     std::cout << base64Encode(encodedKey) << ", ";
+    //
+    //     NCryptFreeObject(key);
+    //     NCryptFreeObject(prov);
+    //     return true;
+    // }
+
+    status = NCryptCreatePersistedKey(
+        prov,
+        &key,
+        BCRYPT_ECDSA_P256_ALGORITHM,
+        name,
+        0,
+        NCRYPT_OVERWRITE_KEY_FLAG | NCRYPT_REQUIRE_VBS_FLAG
+    );
+
+    if (status != ERROR_SUCCESS) {
+        NCryptFreeObject(prov);
+        return FALSE;
+    }
+
+    // Set key properties
+    DWORD length = 256;
+    NCryptSetProperty(key, NCRYPT_LENGTH_PROPERTY, (PBYTE)&length, sizeof(length), 0);
+    DWORD policy = 0;
+    NCryptSetProperty(key, NCRYPT_EXPORT_POLICY_PROPERTY, (PBYTE)&policy, sizeof(policy), 0);
+
+    // Generate the key
+    status = NCryptFinalizeKey(key, 0);
+
+    NCryptFreeObject(key);
+    NCryptFreeObject(prov);
+    return status == ERROR_SUCCESS;
+}
+
 // Hardware key management class
 class HardwareKey {
     NCryptHandleGuard cryptGuard_;
     std::string keyType_;
     bool hasKey_ = false;
 
-    std::variant<std::vector<uint8_t>, std::string> tryCreateKey(const wchar_t *algorithm) {
+    std::variant<std::vector<uint8_t>, std::string> tryCreateKey(const wchar_t* algorithm) {
         NCRYPT_KEY_HANDLE key = 0;
         SECURITY_STATUS status;
         DWORD length = algorithm == BCRYPT_ECDSA_P256_ALGORITHM ? 256 : 2048;
@@ -163,8 +285,8 @@ class HardwareKey {
         }
 
         // Set key properties
-        NCryptSetProperty(key, NCRYPT_LENGTH_PROPERTY, (PBYTE) &length, sizeof(length), 0);
-        NCryptSetProperty(key, NCRYPT_EXPORT_POLICY_PROPERTY, (PBYTE) &policy, sizeof(policy), 0);
+        NCryptSetProperty(key, NCRYPT_LENGTH_PROPERTY, (PBYTE)&length, sizeof(length), 0);
+        NCryptSetProperty(key, NCRYPT_EXPORT_POLICY_PROPERTY, (PBYTE)&policy, sizeof(policy), 0);
 
         // Generate the key
         status = NCryptFinalizeKey(key, 0);
@@ -180,12 +302,12 @@ class HardwareKey {
 public:
     HardwareKey() {
         // Try algorithms in priority order
-        const wchar_t *algorithms[] = {
+        const wchar_t* algorithms[] = {
             BCRYPT_ECDSA_P256_ALGORITHM,
             BCRYPT_RSA_ALGORITHM
         };
 
-        for (const auto &algo: algorithms) {
+        for (const auto& algo : algorithms) {
             auto result = tryCreateKey(algo);
             if (std::holds_alternative<std::string>(result)) {
                 keyType_ = std::get<std::string>(result);
@@ -201,7 +323,7 @@ public:
 
     std::string getKeyType() const { return keyType_; }
 
-    std::vector<uint8_t> sign(const std::vector<uint8_t> &data) {
+    std::vector<uint8_t> sign(const std::vector<uint8_t>& data) {
         BCRYPT_ALG_HANDLE hAlg = nullptr;
         BCRYPT_HASH_HANDLE hHash = nullptr;
         std::vector<uint8_t> hash;
@@ -213,7 +335,7 @@ public:
             throw std::runtime_error("Failed to open hash algorithm");
         }
 
-        BCryptGetProperty(hAlg, BCRYPT_HASH_LENGTH, (PBYTE) &hashSize, sizeof(DWORD), &resultSize, 0);
+        BCryptGetProperty(hAlg, BCRYPT_HASH_LENGTH, (PBYTE)&hashSize, sizeof(DWORD), &resultSize, 0);
         hash.resize(hashSize);
 
         if (BCryptCreateHash(hAlg, &hHash, nullptr, 0, nullptr, 0, 0) != ERROR_SUCCESS) {
@@ -221,7 +343,7 @@ public:
             throw std::runtime_error("Failed to create hash");
         }
 
-        if (BCryptHashData(hHash, (PBYTE) data.data(), data.size(), 0) != ERROR_SUCCESS) {
+        if (BCryptHashData(hHash, (PBYTE)data.data(), data.size(), 0) != ERROR_SUCCESS) {
             BCryptDestroyHash(hHash);
             BCryptCloseAlgorithmProvider(hAlg, 0);
             throw std::runtime_error("Failed to hash data");
@@ -282,16 +404,18 @@ public:
             // Determine the blob type based on key type
             if (keyType_ == "ecdsa") {
                 keyBlobType = BCRYPT_ECCPUBLIC_BLOB;
-            } else if (keyType_ == "rsa-pss") {
+            }
+            else if (keyType_ == "rsa-pss") {
                 keyBlobType = BCRYPT_RSAPUBLIC_BLOB;
-            } else {
+            }
+            else {
                 throw std::runtime_error("Unsupported key type for export");
             }
 
             // Convert BCrypt key to CryptoAPI key
             // For ECDSA, convert to CERT_PUBLIC_KEY_INFO using CAPI2
             DWORD cbPublicKeyInfo = 0;
-            CERT_PUBLIC_KEY_INFO *pInfo = nullptr;
+            CERT_PUBLIC_KEY_INFO* pInfo = nullptr;
 
             // First query the size
             if (!CryptExportPublicKeyInfoEx(
@@ -307,7 +431,7 @@ public:
             }
 
             // Allocate memory for public key info
-            pInfo = (CERT_PUBLIC_KEY_INFO *) LocalAlloc(LPTR, cbPublicKeyInfo);
+            pInfo = (CERT_PUBLIC_KEY_INFO*)LocalAlloc(LPTR, cbPublicKeyInfo);
             if (!pInfo) {
                 throw std::runtime_error("Memory allocation failed");
             }
@@ -328,7 +452,7 @@ public:
 
             // Now encode the public key info to DER
             DWORD cbEncoded = 0;
-            uint8_t *pbEncoded = nullptr;
+            uint8_t* pbEncoded = nullptr;
             if (!CryptEncodeObjectEx(
                 X509_ASN_ENCODING, X509_PUBLIC_KEY_INFO, pInfo, CRYPT_ENCODE_ALLOC_FLAG,
                 nullptr, &pbEncoded, &cbEncoded)) {
@@ -346,7 +470,8 @@ public:
 
             // Return base64 encoded key
             return base64Encode(encodedKey);
-        } catch (const std::exception &e) {
+        }
+        catch (const std::exception& e) {
             throw std::runtime_error(std::string("Failed to export public key: ") + e.what());
         }
     }
@@ -366,7 +491,7 @@ public:
         session_.SetHeader({{"Content-Type", "application/json"}});
     }
 
-    bool register_(const std::string &username, const std::string &password) {
+    bool register_(const std::string& username, const std::string& password) {
         try {
             // Prepare registration request
             nlohmann::json payload = {
@@ -384,28 +509,29 @@ public:
 
             // Handle errors
             switch (response.status_code) {
-                case 400:
-                    if (!response.text.empty()) {
-                        auto errorJson = nlohmann::json::parse(response.text);
-                        if (errorJson.contains("message")) {
-                            throw std::runtime_error(errorJson["message"].get<std::string>());
-                        }
+            case 400:
+                if (!response.text.empty()) {
+                    auto errorJson = nlohmann::json::parse(response.text);
+                    if (errorJson.contains("message")) {
+                        throw std::runtime_error(errorJson["message"].get<std::string>());
                     }
-                    throw std::runtime_error("Invalid registration data");
-                case 409:
-                    throw std::runtime_error("Username already exists");
-                default:
-                    throw std::runtime_error("Server error: " + std::to_string(response.status_code));
+                }
+                throw std::runtime_error("Invalid registration data");
+            case 409:
+                throw std::runtime_error("Username already exists");
+            default:
+                throw std::runtime_error("Server error: " + std::to_string(response.status_code));
             }
-        } catch (const nlohmann::json::exception &e) {
+        }
+        catch (const nlohmann::json::exception& e) {
             throw std::runtime_error("Failed to parse server response: " + std::string(e.what()));
-        } catch (const std::exception &e) {
+        } catch (const std::exception& e) {
             throw;
         }
         return false;
     }
 
-    bool login(const std::string &username, const std::string &password) {
+    bool login(const std::string& username, const std::string& password) {
         try {
             // Prepare login request
             nlohmann::json payload = {
@@ -435,24 +561,25 @@ public:
 
             // Handle specific HTTP errors
             switch (response.status_code) {
-                case 401:
-                    throw std::runtime_error("Invalid username or password");
-                case 400:
-                    if (!response.text.empty()) {
-                        auto errorJson = nlohmann::json::parse(response.text);
-                        if (errorJson.contains("message")) {
-                            throw std::runtime_error(errorJson["message"].get<std::string>());
-                        }
+            case 401:
+                throw std::runtime_error("Invalid username or password");
+            case 400:
+                if (!response.text.empty()) {
+                    auto errorJson = nlohmann::json::parse(response.text);
+                    if (errorJson.contains("message")) {
+                        throw std::runtime_error(errorJson["message"].get<std::string>());
                     }
-                    throw std::runtime_error("Invalid request format");
-                case 404:
-                    throw std::runtime_error("Server endpoint not found. Check server URL");
-                default:
-                    throw std::runtime_error("Server error: " + std::to_string(response.status_code));
+                }
+                throw std::runtime_error("Invalid request format");
+            case 404:
+                throw std::runtime_error("Server endpoint not found. Check server URL");
+            default:
+                throw std::runtime_error("Server error: " + std::to_string(response.status_code));
             }
-        } catch (const nlohmann::json::exception &e) {
+        }
+        catch (const nlohmann::json::exception& e) {
             throw std::runtime_error("Failed to parse server response: " + std::string(e.what()));
-        } catch (const std::exception &e) {
+        } catch (const std::exception& e) {
             throw;
         }
         return false;
@@ -477,7 +604,8 @@ public:
                     timestamp.begin(), timestamp.end()
                 }));
                 requestHeaders["x-rpc-sec-dbcs-accel-pub-id"] = accelerationKeyId_;
-            } else {
+            }
+            else {
                 // Generate new acceleration key and sign with hardware key
                 std::string accelPub = hardwareKey_.exportPublicKey();
                 std::string accelPubSig = base64Encode(hardwareKey_.sign({accelPub.begin(), accelPub.end()}));
@@ -504,7 +632,8 @@ public:
                 }
                 return true;
             }
-        } catch (const std::exception &e) {
+        }
+        catch (const std::exception& e) {
             std::cerr << "Authentication check failed: " << e.what() << std::endl;
         }
         return false;
@@ -530,13 +659,14 @@ class MainWindow {
     static constexpr COLORREF BACKGROUND_COLOR = RGB(240, 240, 240);
 
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-        MainWindow *self = nullptr;
+        MainWindow* self = nullptr;
         if (uMsg == WM_NCCREATE) {
-            CREATESTRUCT *create = reinterpret_cast<CREATESTRUCT *>(lParam);
-            self = reinterpret_cast<MainWindow *>(create->lpCreateParams);
+            CREATESTRUCT* create = reinterpret_cast<CREATESTRUCT*>(lParam);
+            self = reinterpret_cast<MainWindow*>(create->lpCreateParams);
             SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
-        } else {
-            self = reinterpret_cast<MainWindow *>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+        }
+        else {
+            self = reinterpret_cast<MainWindow*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
         }
 
         if (self) return self->handleMessage(hwnd, uMsg, wParam, lParam);
@@ -545,39 +675,39 @@ class MainWindow {
 
     LRESULT handleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
         switch (uMsg) {
-            case WM_CREATE:
-                backgroundBrush_ = CreateSolidBrush(BACKGROUND_COLOR);
-                createControls(hwnd);
+        case WM_CREATE:
+            backgroundBrush_ = CreateSolidBrush(BACKGROUND_COLOR);
+            createControls(hwnd);
+            return 0;
+
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLORBTN:
+        case WM_CTLCOLOREDIT:
+            // Set the background color for all controls to match window
+            SetBkColor((HDC)wParam, BACKGROUND_COLOR);
+            return (LRESULT)backgroundBrush_;
+
+        case WM_COMMAND:
+            switch (LOWORD(wParam)) {
+            case 1: // Login button
+                onLogin();
                 return 0;
-
-            case WM_CTLCOLORSTATIC:
-            case WM_CTLCOLORBTN:
-            case WM_CTLCOLOREDIT:
-                // Set the background color for all controls to match window
-                SetBkColor((HDC) wParam, BACKGROUND_COLOR);
-                return (LRESULT) backgroundBrush_;
-
-            case WM_COMMAND:
-                switch (LOWORD(wParam)) {
-                    case 1: // Login button
-                        onLogin();
-                        return 0;
-                    case 2: // Register button
-                        onRegister();
-                        return 0;
-                    case 3: // Logout button
-                        onLogout();
-                        return 0;
-                    case 4: // Check Auth button
-                        onCheckAuth();
-                        return 0;
-                }
-                break;
-
-            case WM_DESTROY:
-                DeleteObject(backgroundBrush_);
-                PostQuitMessage(0);
+            case 2: // Register button
+                onRegister();
                 return 0;
+            case 3: // Logout button
+                onLogout();
+                return 0;
+            case 4: // Check Auth button
+                onCheckAuth();
+                return 0;
+            }
+            break;
+
+        case WM_DESTROY:
+            DeleteObject(backgroundBrush_);
+            PostQuitMessage(0);
+            return 0;
         }
         return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
@@ -608,40 +738,40 @@ class MainWindow {
                                          WS_CHILD | WS_VISIBLE | SS_CENTER,
                                          centerX - 30, startY, 380, 30,
                                          hwnd, nullptr, nullptr, nullptr);
-        SendMessage(titleLabel, WM_SETFONT, (WPARAM) hTitleFont, TRUE);
+        SendMessage(titleLabel, WM_SETFONT, (WPARAM)hTitleFont, TRUE);
 
         // Add subtitle with explanation
         HWND subtitleLabel = CreateWindowEx(0, "STATIC", "Login with hardware-protected security token",
                                             WS_CHILD | WS_VISIBLE | SS_CENTER,
                                             centerX, startY + 35, 320, 20,
                                             hwnd, nullptr, nullptr, nullptr);
-        SendMessage(subtitleLabel, WM_SETFONT, (WPARAM) hLabelFont, TRUE);
+        SendMessage(subtitleLabel, WM_SETFONT, (WPARAM)hLabelFont, TRUE);
 
         // Create username field with better spacing
         HWND usernameLabel = CreateWindowEx(0, "STATIC", "Username:",
                                             WS_CHILD | WS_VISIBLE | SS_LEFT,
                                             centerX, startY + 75, 80, 20,
                                             hwnd, nullptr, nullptr, nullptr);
-        SendMessage(usernameLabel, WM_SETFONT, (WPARAM) hLabelFont, TRUE);
+        SendMessage(usernameLabel, WM_SETFONT, (WPARAM)hLabelFont, TRUE);
 
         usernameEditHandle_ = CreateWindowEx(0, "EDIT", "",
                                              WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
                                              centerX + 90, startY + 75, 230, 26,
                                              hwnd, nullptr, nullptr, nullptr);
-        SendMessage(usernameEditHandle_, WM_SETFONT, (WPARAM) hFont, TRUE);
+        SendMessage(usernameEditHandle_, WM_SETFONT, (WPARAM)hFont, TRUE);
 
         // Create password field
         HWND passwordLabel = CreateWindowEx(0, "STATIC", "Password:",
                                             WS_CHILD | WS_VISIBLE | SS_LEFT,
                                             centerX, startY + 110, 80, 20,
                                             hwnd, nullptr, nullptr, nullptr);
-        SendMessage(passwordLabel, WM_SETFONT, (WPARAM) hLabelFont, TRUE);
+        SendMessage(passwordLabel, WM_SETFONT, (WPARAM)hLabelFont, TRUE);
 
         passwordEditHandle_ = CreateWindowEx(0, "EDIT", "",
                                              WS_CHILD | WS_VISIBLE | WS_BORDER | ES_PASSWORD | ES_AUTOHSCROLL,
                                              centerX + 90, startY + 110, 230, 26,
                                              hwnd, nullptr, nullptr, nullptr);
-        SendMessage(passwordEditHandle_, WM_SETFONT, (WPARAM) hFont, TRUE);
+        SendMessage(passwordEditHandle_, WM_SETFONT, (WPARAM)hFont, TRUE);
 
         // Create buttons with modern style
         DWORD buttonStyle = WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON;
@@ -654,36 +784,36 @@ class MainWindow {
         loginButtonHandle_ = CreateWindowEx(0, "BUTTON", "Login",
                                             buttonStyle,
                                             centerX, buttonsStartY, buttonWidth, buttonHeight,
-                                            hwnd, (HMENU) 1, nullptr, nullptr);
-        SendMessage(loginButtonHandle_, WM_SETFONT, (WPARAM) hFont, TRUE);
+                                            hwnd, (HMENU)1, nullptr, nullptr);
+        SendMessage(loginButtonHandle_, WM_SETFONT, (WPARAM)hFont, TRUE);
 
         registerButtonHandle_ = CreateWindowEx(0, "BUTTON", "Register",
                                                buttonStyle,
                                                centerX + buttonWidth + buttonSpacing, buttonsStartY, buttonWidth,
                                                buttonHeight,
-                                               hwnd, (HMENU) 2, nullptr, nullptr);
-        SendMessage(registerButtonHandle_, WM_SETFONT, (WPARAM) hFont, TRUE);
+                                               hwnd, (HMENU)2, nullptr, nullptr);
+        SendMessage(registerButtonHandle_, WM_SETFONT, (WPARAM)hFont, TRUE);
 
         logoutButtonHandle_ = CreateWindowEx(0, "BUTTON", "Logout",
                                              buttonStyle,
                                              centerX + (buttonWidth + buttonSpacing) * 2, buttonsStartY, buttonWidth,
                                              buttonHeight,
-                                             hwnd, (HMENU) 3, nullptr, nullptr);
-        SendMessage(logoutButtonHandle_, WM_SETFONT, (WPARAM) hFont, TRUE);
+                                             hwnd, (HMENU)3, nullptr, nullptr);
+        SendMessage(logoutButtonHandle_, WM_SETFONT, (WPARAM)hFont, TRUE);
 
         checkAuthButtonHandle_ = CreateWindowEx(0, "BUTTON", "Check",
                                                 buttonStyle,
                                                 centerX + (buttonWidth + buttonSpacing) * 3, buttonsStartY, buttonWidth,
                                                 buttonHeight,
-                                                hwnd, (HMENU) 4, nullptr, nullptr);
-        SendMessage(checkAuthButtonHandle_, WM_SETFONT, (WPARAM) hFont, TRUE);
+                                                hwnd, (HMENU)4, nullptr, nullptr);
+        SendMessage(checkAuthButtonHandle_, WM_SETFONT, (WPARAM)hFont, TRUE);
 
         // Create status bar
         HWND statusBar = CreateWindowEx(0, "STATIC", "Ready",
                                         WS_CHILD | WS_VISIBLE | SS_CENTER,
                                         centerX, buttonsStartY + 50, 320, 20,
                                         hwnd, nullptr, nullptr, nullptr);
-        SendMessage(statusBar, WM_SETFONT, (WPARAM) hLabelFont, TRUE);
+        SendMessage(statusBar, WM_SETFONT, (WPARAM)hLabelFont, TRUE);
 
         // Initially disable logout and check auth buttons
         EnableWindow(logoutButtonHandle_, FALSE);
@@ -713,7 +843,8 @@ class MainWindow {
                 EnableWindow(logoutButtonHandle_, TRUE);
                 EnableWindow(checkAuthButtonHandle_, TRUE);
             }
-        } catch (const std::exception &e) {
+        }
+        catch (const std::exception& e) {
             MessageBox(windowHandle_, e.what(), "Login Failed", MB_OK | MB_ICONERROR);
         }
 
@@ -739,7 +870,8 @@ class MainWindow {
                 MessageBox(windowHandle_, "Registration successful! You can now log in.", "Success",
                            MB_OK | MB_ICONINFORMATION);
             }
-        } catch (const std::exception &e) {
+        }
+        catch (const std::exception& e) {
             MessageBox(windowHandle_, e.what(), "Registration Failed", MB_OK | MB_ICONERROR);
         }
 
@@ -759,7 +891,8 @@ class MainWindow {
         if (authService_.isAuthenticated()) {
             MessageBox(windowHandle_, "Authentication valid and hardware-bound!", "Success",
                        MB_OK | MB_ICONINFORMATION);
-        } else {
+        }
+        else {
             MessageBox(windowHandle_, "Not authenticated!", "Error", MB_OK | MB_ICONERROR);
         }
     }
@@ -816,8 +949,65 @@ public:
     HWND handle() const { return windowHandle_; }
 };
 
+void handleErrors() {
+    ERR_print_errors_fp(stderr);
+    abort();
+}
+
+int TestECDSAPlusECDH() {
+    ERR_load_crypto_strings();
+    OpenSSL_add_all_algorithms();
+
+    // Step 1: Create EC Key
+    EC_KEY *ec_key = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1); // secp256r1
+    if (!ec_key || !EC_KEY_generate_key(ec_key)) handleErrors();
+
+    // Export public key
+    const EC_POINT *pub_key = EC_KEY_get0_public_key(ec_key);
+    const EC_GROUP *group = EC_KEY_get0_group(ec_key);
+
+    // Step 2: ECDSA Sign
+    const char *msg = "hello world";
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256((const unsigned char *)msg, strlen(msg), hash);
+
+    unsigned char sig[256];
+    unsigned int sig_len;
+
+    if (!ECDSA_sign(0, hash, sizeof(hash), sig, &sig_len, ec_key))
+        handleErrors();
+
+    printf("ECDSA signature generated (len = %d)\n", sig_len);
+
+    // Step 3: ECDSA Verify
+    int verify_ok = ECDSA_verify(0, hash, sizeof(hash), sig, sig_len, ec_key);
+    printf("ECDSA signature verification: %s\n", verify_ok == 1 ? "success" : "fail");
+
+    // Step 4: ECDH key exchange with a peer key
+    EC_KEY *peer_key = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
+    if (!peer_key || !EC_KEY_generate_key(peer_key)) handleErrors();
+
+    // Derive shared secret
+    unsigned char secret[256];
+    int secret_len = ECDH_compute_key(secret, sizeof(secret),
+                                      EC_KEY_get0_public_key(peer_key), ec_key, NULL);
+
+    if (secret_len <= 0) handleErrors();
+    printf("ECDH shared secret computed (len = %d)\n", secret_len);
+
+    // Cleanup
+    EC_KEY_free(ec_key);
+    EC_KEY_free(peer_key);
+    EVP_cleanup();
+    ERR_free_strings();
+
+    return 0;
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     try {
+        TestECDSAPlusECDH();
+
         // Print available algorithms at startup
         printAvailableAlgorithms();
 
@@ -836,7 +1026,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
 
         return static_cast<int>(msg.wParam);
-    } catch (const std::exception &e) {
+    }
+    catch (const std::exception& e) {
         MessageBoxA(nullptr, e.what(), "Error", MB_OK | MB_ICONERROR);
         return 1;
     }
