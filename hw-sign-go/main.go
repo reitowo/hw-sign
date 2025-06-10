@@ -432,13 +432,134 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 
-// Handle acceleration key registration (both asymmetric and ECDH)
+// ============ Enhanced Crypto Utility Functions ============
+
+// Verify ECDSA signature and then use the same key for ECDH key exchange
+func verifyDataWithCliPubECDSA(clientPubKeyData string, data string, signature string) (*ecdsa.PublicKey, error) {
+	debugLog("verifyDataWithCliPubECDSA", "Processing dual-purpose P-256 key, data: %s", data)
+
+	// First parse as ECDSA public key for signature verification
+	ecdsaKey, err := parsePublicKeyAsECDSAAndCheckCurveForECDH(clientPubKeyData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ECDSA key: %w", err)
+	}
+
+	// Verify the data signature using ECDSA
+	if err := verifyECDSASignature(ecdsaKey, data, signature); err != nil {
+		return nil, fmt.Errorf("ECDSA signature verification failed: %w", err)
+	}
+
+	debugLog("verifyDataWithCliPubECDSA", "ECDSA signature verified successfully")
+	return ecdsaKey, nil
+}
+
+// Parse ECDSA public key specifically for dual ECDSA/ECDH usage
+func parsePublicKeyAsECDSAAndCheckCurveForECDH(keyData string) (*ecdsa.PublicKey, error) {
+	decoded, err := base64.StdEncoding.DecodeString(keyData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode key: %w", err)
+	}
+
+	// Try uncompressed point format first (0x04 prefix)
+	if len(decoded) == 65 && decoded[0] == 0x04 {
+		return parseRawECDSAPublicKeyX962(decoded)
+	}
+
+	// Try PKIX format
+	key, err := x509.ParsePKIXPublicKey(decoded)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse PKIX public key: %w", err)
+	}
+
+	ecdsaKey, ok := key.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, errors.New("key is not ECDSA")
+	}
+
+	// Ensure it's P-256 curve for dual usage
+	if ecdsaKey.Curve != elliptic.P256() {
+		return nil, errors.New("key must use P-256 curve for dual ECDSA/ECDH usage")
+	}
+
+	return ecdsaKey, nil
+}
+
+// Verify ECDSA signature specifically
+func verifyECDSASignature(publicKey *ecdsa.PublicKey, data string, signature string) error {
+	sigBytes, err := base64.StdEncoding.DecodeString(signature)
+	if err != nil {
+		return fmt.Errorf("invalid signature format: %w", err)
+	}
+
+	hash := sha256.Sum256([]byte(data))
+
+	// Try ASN.1 signature format first
+	if ecdsa.VerifyASN1(publicKey, hash[:], sigBytes) {
+		return nil
+	}
+
+	// Try raw r||s format (64 bytes for P-256)
+	if len(sigBytes) == 64 {
+		r := new(big.Int).SetBytes(sigBytes[:32])
+		s := new(big.Int).SetBytes(sigBytes[32:])
+		if ecdsa.Verify(publicKey, hash[:], r, s) {
+			return nil
+		}
+	}
+
+	return errors.New("signature verification failed")
+}
+
+// Convert ECDSA public key to ECDH public key for key exchange
+func convertECDSAToECDH(ecdsaKey *ecdsa.PublicKey) (*ecdh.PublicKey, error) {
+	debugLog("convertECDSAToECDH", "Converting ECDSA P-256 key to ECDH format")
+
+	if ecdsaKey.Curve != elliptic.P256() {
+		return nil, errors.New("only P-256 curve supported for ECDSA to ECDH conversion")
+	}
+
+	// Marshal the ECDSA public key to uncompressed point format
+	rawKey := elliptic.Marshal(ecdsaKey.Curve, ecdsaKey.X, ecdsaKey.Y)
+
+	// Create ECDH public key from the marshaled data
+	curve := ecdh.P256()
+	ecdhKey, err := curve.NewPublicKey(rawKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ECDH key: %w", err)
+	}
+
+	return ecdhKey, nil
+}
+
+// Perform ECDH key exchange and return shared secret
+func performECDHKeyExchange(serverPrivKey *ecdh.PrivateKey, clientECDHKey *ecdh.PublicKey) ([]byte, error) {
+	debugLog("performECDHKeyExchange", "Performing ECDH key exchange with client's P-256 key")
+
+	// Compute shared secret
+	sharedSecret, err := computeSharedSecret(serverPrivKey, clientECDHKey)
+	if err != nil {
+		return nil, fmt.Errorf("ECDH computation failed: %w", err)
+	}
+
+	debugLog("performECDHKeyExchange", "ECDH key exchange completed, shared secret length: %d", len(sharedSecret))
+	return sharedSecret, nil
+}
+
+// Handle acceleration key registration with enhanced dual-purpose ECDSA/ECDH support
 func verifyAccelKeyRegistrationRequest(w http.ResponseWriter, r *http.Request, hwKeyInfo PublicKeyInfo) error {
-	debugLog("verifyAccelKeyRegistration", "Processing new acceleration key registration, type: %s", hwKeyInfo.Type)
-	// Verify acceleration key registration
+	debugLog("verifyAccelKeyRegistration", "Processing acceleration key registration, hw key type: %s", hwKeyInfo.Type)
+
+	// Get request headers
 	accelPub := r.Header.Get("x-rpc-sec-dbcs-accel-pub")
 	accelPubType := r.Header.Get("x-rpc-sec-dbcs-accel-pub-type")
 	accelPubSig := r.Header.Get("x-rpc-sec-dbcs-accel-pub-sig")
+	data := r.Header.Get("x-rpc-sec-dbcs-data")
+	dataSig := r.Header.Get("x-rpc-sec-dbcs-data-sig")
+
+	if accelPub == "" || accelPubType == "" || accelPubSig == "" {
+		errorResponse(w, "Missing acceleration key or signature", http.StatusBadRequest)
+		return errors.New("missing acceleration key or signature")
+	}
 
 	// Parse hardware key for verification
 	hwKey, err := parseAndValidateKey(string(hwKeyInfo.Key), string(hwKeyInfo.Type), "hardware key")
@@ -449,7 +570,7 @@ func verifyAccelKeyRegistrationRequest(w http.ResponseWriter, r *http.Request, h
 
 	// Verify acceleration key is signed by hardware key
 	if err := verifySignedData(hwKey, accelPub, accelPubSig); err != nil {
-		errorResponse(w, err.Error(), http.StatusUnauthorized)
+		errorResponse(w, fmt.Sprintf("hardware key verification failed: %v", err), http.StatusUnauthorized)
 		return err
 	}
 
@@ -460,74 +581,76 @@ func verifyAccelKeyRegistrationRequest(w http.ResponseWriter, r *http.Request, h
 		return err
 	}
 
-	// Determine if this is an ECDH key exchange
-	isECDH := strings.ToLower(accelPubType) == string(KeyTypeECDH)
-
-	// Create the unified key info
+	// Create unified key info
 	unifiedKey := UnifiedKeyInfo{
 		PublicKey: []byte(accelPub),
 		KeyType:   KeyType(strings.ToLower(accelPubType)),
 	}
 
-	// Handle ECDH specific key exchange
-	if isECDH {
-		if err := setupECDHExchange(w, accelPub, &unifiedKey); err != nil {
+	// Handle ECDH case with dual-purpose ECDSA/ECDH key
+	if strings.ToLower(accelPubType) == string(KeyTypeECDH) {
+		if err := performDualPurposeECDHExchange(w, accelPub, data, dataSig, &unifiedKey); err != nil {
 			errorResponse(w, err.Error(), http.StatusBadRequest)
+			return err
+		}
+	} else {
+		// Handle regular asymmetric key case
+		if err := validateAsymmetricRequest(unifiedKey, data, dataSig); err != nil {
+			errorResponse(w, err.Error(), http.StatusUnauthorized)
 			return err
 		}
 	}
 
-	// Store the unified key with its ID
+	// Store the unified key
 	accelKeys.Set(accelKeyId, unifiedKey, cache.DefaultExpiration)
 	w.Header().Set("x-rpc-sec-dbcs-accel-pub-id", accelKeyId)
 
-	// Process this initial request with hardware key context if it's ECDH
-	if isECDH {
-		// Add hardware key to the unified key for ECDH initial validation
-		unifiedKey.HwKey = hwKey
-	}
-
-	// For both ECDH and regular asymmetric keys, handle the request
-	return verifyRequest(w, r, unifiedKey)
+	debugLog("verifyAccelKeyRegistration", "Acceleration key registered with ID: %s", accelKeyId)
+	return nil
 }
 
-// Setup ECDH key exchange
-func setupECDHExchange(w http.ResponseWriter, accelPub string, unifiedKey *UnifiedKeyInfo) error {
-	debugLog("ECDH", "Setting up ECDH key exchange, client pubkey length: %d", len(accelPub))
-	// Parse client's ECDH public key
-	clientECDHPub, err := parsePublicKey(accelPub, string(KeyTypeECDH))
-	if err != nil {
-		return fmt.Errorf("invalid ECDH public key: %v", err)
+// Setup ECDH exchange with dual-purpose ECDSA/ECDH key
+func performDualPurposeECDHExchange(w http.ResponseWriter, accelPub string, data string, dataSig string, unifiedKey *UnifiedKeyInfo) error {
+	debugLog("performDualPurposeECDHExchange", "Setting up dual-purpose ECDSA/ECDH exchange")
+
+	if data == "" || dataSig == "" {
+		return errors.New("missing data or signature for ECDH initial verification")
 	}
 
-	// Generate server's ECDH key pair
+	// Step 1: Verify ECDSA signature of data, and convert the key to ECDH public key, must be secp256k1 curve.
+	clientECDSAPub, err := verifyDataWithCliPubECDSA(accelPub, data, dataSig)
+	if err != nil {
+		return fmt.Errorf("dual-purpose key verification failed: %v", err)
+	}
+
+	// Convert client's ECDSA key to ECDH format
+	clientECDHPub, err := convertECDSAToECDH(clientECDSAPub)
+	if err != nil {
+		return fmt.Errorf("failed to convert client key to ECDH: %w", err)
+	}
+
+	// Step 2: Generate server's Random ECDH key pair
 	serverECDHPriv, err := generateECDHKeyPair()
 	if err != nil {
 		return fmt.Errorf("failed to generate server ECDH key: %v", err)
 	}
 
-	// Export server's public key for the client
+	// Step 3: Perform ECDH key exchange
+	sharedSecret, err := performECDHKeyExchange(serverECDHPriv, clientECDHPub)
+	if err != nil {
+		return fmt.Errorf("ECDH key exchange failed: %v", err)
+	}
+
+	// Step 4: Return server's public key to client
 	serverPubKeyBytes := serverECDHPriv.PublicKey().Bytes()
 	serverPubKeyBase64 := base64.StdEncoding.EncodeToString(serverPubKeyBytes)
 	w.Header().Set("x-rpc-sec-dbcs-accel-pub", serverPubKeyBase64)
 
-	// Compute the shared secret
-	clientPubKey, ok := clientECDHPub.(*ecdh.PublicKey)
-	if !ok {
-		return errors.New("invalid ECDH public key type")
-	}
-
-	sharedSecret, err := computeSharedSecret(serverECDHPriv, clientPubKey)
-	if err != nil {
-		return fmt.Errorf("failed to compute shared secret: %v", err)
-	}
-
-	debugLog("ECDH", "Shared secret computed, length: %d bytes", len(sharedSecret))
-
-	// Save the symmetric key in the unified key info
+	// Step 5: Store the results in unified key info
 	unifiedKey.SymmetricKey = sharedSecret
 	unifiedKey.ServerPrivKey = serverECDHPriv
 
+	debugLog("performDualPurposeECDHExchange", "Dual-purpose ECDH exchange completed successfully")
 	return nil
 }
 
