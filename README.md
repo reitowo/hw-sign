@@ -36,14 +36,20 @@
 #### 临时密钥（仅存储于内存）
 - 仅存储于内存的密码学密钥对，用于提高性能
 - 由硬件密钥签名以验证真实性
-- 用于常规 API 请求签名
+- 用于常规 API 请求签名或 ECDH 密钥协商
 - 支持轮转与重新生成（应用重启/会话过期）
 
 ### 算法优先级和格式要求
 
+#### 硬件密钥类型优先级
 1. ED25519
-2. ECDSA (P-256)
-3. RSA-PSS (2048)
+2. ECDSA (P-256) (secp256r1) - 标识为`ecdsa-p256`
+3. RSA-PSS (2048) - 标识为`rsa-2048`
+
+#### 临时密钥类型优先级
+1. ECDH (P-256) - 标识为`ecdh-p256` (用于密钥协商)
+2. ECDSA (P-256) - 标识为`ecdsa-p256`
+3. RSA-PSS (2048) - 标识为`rsa-2048`
 
 ### 平台特定实现
 
@@ -86,8 +92,8 @@
 
 2. 带硬件绑定的登录（POST /login）
    - 请求头:
-     - `x-rpc-sec-dbcs-hw-pub`: 硬件公钥（base64编码）
-     - `x-rpc-sec-dbcs-hw-pub-type`: 密钥算法（"ed25519", "ecdsa", "rsa-pss"）
+     - `x-rpc-sec-bound-token-hw-pub`: 硬件公钥（base64编码）
+     - `x-rpc-sec-bound-token-hw-pub-type`: 密钥算法（"ecdsa-p256", "rsa-2048"）
    - 请求体:
    ```json
    {
@@ -105,28 +111,31 @@
 3. 一个需要登录态的接口（GET /authenticated）
    通用请求头:
    - `Authorization: Bearer <token>`
-   - `x-rpc-sec-dbcs-data`: 请求数据哈希/时间戳
-   - `x-rpc-sec-dbcs-data-sig`: 请求签名
+   - `x-rpc-sec-bound-token-data`: 时间戳+随机Hex格式的字符串
+   - `x-rpc-sec-bound-token-data-sig`: 请求签名
 
    对于新临时密钥:
-   - `x-rpc-sec-dbcs-accel-pub`: 临时公钥
-   - `x-rpc-sec-dbcs-accel-pub-type`: 密钥算法
-   - `x-rpc-sec-dbcs-accel-pub-sig`: 硬件签名的临时密钥
+   - `x-rpc-sec-bound-token-accel-pub`: 临时公钥
+   - `x-rpc-sec-bound-token-accel-pub-type`: 密钥算法类型
+   - `x-rpc-sec-bound-token-accel-pub-sig`: 硬件签名的临时密钥
 
    新临时密钥时的响应头:
-   - `x-rpc-sec-dbcs-accel-pub-id`: 新临时密钥ID
+   - `x-rpc-sec-bound-token-accel-pub-id`: 临时密钥ID
+   - `x-rpc-sec-bound-token-accel-pub-expire`: 过期秒级Unix时间戳
 
    对于现有密钥:
-   - `x-rpc-sec-dbcs-accel-pub-id`: 临时密钥ID
+   - `x-rpc-sec-bound-token-accel-pub-id`: 临时密钥ID
 
 ### 请求签名
 
-即 `x-rpc-sec-dbcs-data`，按安全性从高到低排序：
+即 `x-rpc-sec-bound-token-data`，使用格式 `{Timestamp}-{32BytesRandomHex}`，按安全性从高到低排序：
 
 1. 带 Redis 的随机字符串
    - 签名随机 nonce
    - 存储在 Redis 中以防止重放
    - 最佳安全性，需要 Redis
+   - 服务端只会使用一次该值，重复使用将认定非法
+   - 服务端会直接认定 Timestamp < Now - TExpire 的请求非法
 
 2. 请求体哈希
    - 签名请求体的 SHA256 哈希
@@ -138,25 +147,37 @@
    - 设置较短的过期窗口
    - 最简单，安全性略低
 
-### 性能优化
+### 性能优化 - ECDH密钥协商
 
-对于性能敏感场景，可以通过生成 ECDH 类型的临时密钥，并协商出仅在内存中的对称密钥，使用 HMAC-SHA256 对 `x-rpc-sec-dbcs-data` 进行签名，以取得一样的效果。
+对于性能敏感场景，通过ECDH协商共享密钥并使用HMAC-SHA256进行高性能签名：
 
-参考参数：
+1. 初始化流程：
+   - SDK初始化时生成临时密钥对(CliTmpPub/CliTmpPriv)
+   - 使用硬件私钥对CliTmpPub完成签名(只需一次)
+   - 本次程序运行期间无需再次使用硬件签名
+
+2. 请求签名流程：
+   - 首次请求时，服务端生成临时密钥对(SrvTmpPub/SrvTmpPriv)
+   - 服务端用CliTmpPub+SrvTmpPriv通过ECDH生成共享密钥HmacSecret
+   - 客户端用SrvTmpPub+CliTmpPriv通过ECDH生成相同的HmacSecret
+   - 后续请求使用HmacSecret计算HMAC-SHA256签名，性能更佳
+
+#### 参考参数
 
 在新的临时协商密钥对生成时：
-- `x-rpc-sec-dbcs-accel-pub`: 客户端临时协商公钥全文
-- `x-rpc-sec-dbcs-accel-pub-type`: 客户端临时协商公钥类型：ecdh
-- `x-rpc-sec-dbcs-accel-pub-sig`: 客户端临时协商公钥用硬件密钥对生成的签名
+- `x-rpc-sec-bound-token-accel-pub`: 客户端临时协商公钥全文
+- `x-rpc-sec-bound-token-accel-pub-type`: 客户端临时协商公钥类型：`ecdh-p256`
+- `x-rpc-sec-bound-token-accel-pub-sig`: 客户端临时协商公钥用硬件密钥对生成的签名
 
 服务端返回新的临时协商公钥时：
-- `x-rpc-sec-dbcs-accel-pub`: 服务端临时协商公钥全文
-- `x-rpc-sec-dbcs-accel-pub-id`: 临时协商公钥 ID，指向协商后的对称密钥
+- `x-rpc-sec-bound-token-accel-pub`: 服务端临时协商公钥全文
+- `x-rpc-sec-bound-token-accel-pub-id`: 临时协商公钥 ID，指向协商后的对称密钥
+- `x-rpc-sec-bound-token-accel-pub-expire`: 过期秒级 Unix 时间戳
 
 请求时的签名参数：
-- `x-rpc-sec-dbcs-data`: 随机字符串 / 请求体 SHA256 / 时间戳
-- `x-rpc-sec-dbcs-data-sig`: 对上面任一项，使用协商对称密钥计算的 HMAC
-- `x-rpc-sec-dbcs-accel-pub-id`: 临时公钥 ID
+- `x-rpc-sec-bound-token-data`: 格式为`{Timestamp}-{32BytesRandomHex}`
+- `x-rpc-sec-bound-token-data-sig`: 对上述数据，使用协商对称密钥计算的 HMAC
+- `x-rpc-sec-bound-token-accel-pub-id`: 临时公钥 ID
 
 ## 示例
 

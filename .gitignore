@@ -2,3 +2,5 @@
 .vscode/
 xcuserdata/
 .DS_Store
+hw_sign_keys.json
+hw-sign-android/build/
