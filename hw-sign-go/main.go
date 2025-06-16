@@ -617,7 +617,7 @@ func performDualPurposeECDHExchange(w http.ResponseWriter, accelPub string, data
 		return errors.New("missing data or signature for ECDH initial verification")
 	}
 
-	// Step 1: Verify ECDSA signature of data, and convert the key to ECDH public key, must be secp256k1 curve.
+	// Step 1: Verify ECDSA signature of data, and convert the key to ECDH public key, must be SECG secp256r1 / X9.62 prime256v1 curve.
 	clientECDSAPub, err := verifyDataWithCliPubECDSA(accelPub, data, dataSig)
 	if err != nil {
 		return fmt.Errorf("dual-purpose key verification failed: %v", err)
