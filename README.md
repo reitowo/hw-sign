@@ -1,88 +1,88 @@
-# 登录态硬件绑定机制
+# Hardware-Bound Authentication Mechanism
 
-最小原型验证
+Minimum Prototype Verification
 
-## 概述
+## Overview
 
-将登录会话与设备上硬件安全模块的一对非对称密钥绑定，并使其不可导出，从原理上防止令牌被盗或在未授权设备上进行使用。
+Binding login sessions to a pair of asymmetric keys in the device's hardware security module that cannot be exported, fundamentally preventing token theft or unauthorized use on other devices.
 
-## 设计
+## Design
 
-### 硬件密钥绑定
-- 硬件安全模块直接生成密钥对，私钥不可导出
-- 每个请求都通过签名进行验证
+### Hardware Key Binding
+- Hardware security module directly generates key pairs, private key cannot be exported
+- Each request is verified through signatures
 
-### 降级机制
-首选硬件绑定，当硬件安全不可用时，系统会降级：
-- Windows：系统版本过低，TPM 不存在或在 BIOS 中禁用
-- Android：系统版本过低，TEE 与 StrongBox 都不存在
+### Fallback Mechanism
+Hardware binding is preferred, but when hardware security is unavailable, the system will degrade:
+- Windows: System version too old, TPM doesn't exist or is disabled in BIOS
+- Android: System version too old, neither TEE nor StrongBox exists
 
-在这些情况下，登录态不受硬件密钥保护，不影响正常使用
+In these cases, login state is not protected by hardware keys, but normal usage is not affected
 
-### 流程解耦合
-- 不关心登陆态实现，如 Cookie 或是各种应用维护的 Token 体系
-- 与登陆流程分离，登陆可以使用其他更安全的认证，如 WebAuthn
+### Decoupled Process
+- Agnostic to login state implementation, such as Cookies or various application Token systems
+- Separated from login flow, which can use more secure authentication like WebAuthn
 
-## 技术实现
+## Technical Implementation
 
-### 密钥架构
+### Key Architecture
 
-#### 硬件密钥（设备绑定）
-- 存储在硬件中的不可提取密码学密钥对
-- 每个登录会话都生成新的密钥
-- 专用于签署临时密钥
-- 与登录态关联，而非用户账户
+#### Hardware Keys (Device Binding)
+- Non-extractable cryptographic key pairs stored in hardware
+- New key generated for each login session
+- Dedicated to signing temporary keys
+- Associated with login state, not user accounts
 
-#### 临时密钥（仅存储于内存）
-- 仅存储于内存的密码学密钥对，用于提高性能
-- 由硬件密钥签名以验证真实性
-- 用于常规 API 请求签名或 ECDH 密钥协商
-- 支持轮转与重新生成（应用重启/会话过期）
+#### Temporary Keys (Memory-Only)
+- Cryptographic key pairs stored only in memory to improve performance
+- Signed by hardware keys to verify authenticity
+- Used for regular API request signatures or ECDH key negotiation
+- Supports rotation and regeneration (app restart/session expiry)
 
-### 算法优先级和格式要求
+### Algorithm Priority and Format Requirements
 
-#### 硬件密钥类型优先级
+#### Hardware Key Type Priority
 1. ED25519
-2. ECDSA (P-256) (secp256r1) - 标识为`ecdsa-p256`
-3. RSA-PSS (2048) - 标识为`rsa-2048`
+2. ECDSA (P-256) (secp256r1) - identified as `ecdsa-p256`
+3. RSA-PSS (2048) - identified as `rsa-2048`
 
-#### 临时密钥类型优先级
-1. ECDH (P-256) - 标识为`ecdh-p256` (用于密钥协商)
-2. ECDSA (P-256) - 标识为`ecdsa-p256`
-3. RSA-PSS (2048) - 标识为`rsa-2048`
+#### Temporary Key Type Priority
+1. ECDH (P-256) - identified as `ecdh-p256` (for key negotiation)
+2. ECDSA (P-256) - identified as `ecdsa-p256`
+3. RSA-PSS (2048) - identified as `rsa-2048`
 
-### 平台特定实现
+### Platform-Specific Implementation
 
-#### 浏览器（Web Crypto API）
-- 使用 SubtleCrypto API
-- 基于 IndexedDB 的密钥引用存储（不导出）
+#### Browser (Web Crypto API)
+- Uses SubtleCrypto API
+- IndexedDB-based key reference storage (non-exportable)
 
-示例实现：`hw-sign-browser/src/services/authService.ts`
+Example implementation: `hw-sign-browser/src/services/authService.ts`
 
-#### Windows（CNG/NCrypt）
-- 使用 Windows CryptoNG (NCrypt) API
-- 基于 TPM 的密钥存储
+#### Windows (CNG/NCrypt)
+- Uses Windows CryptoNG (NCrypt) API
+- TPM-based key storage
 
-示例实现：`hw-sign-win/main.cpp`
+Example implementation: `hw-sign-win/main.cpp`
 
-#### Apple（安全隔区）
-- 使用 SecKey API
-- 基于安全隔区 (Security Enclave) 密钥存储
+#### Apple (Secure Enclave)
+- Uses SecKey API
+- Secure Enclave-based key storage
 
-示例实现：`hw-sign-apple/hw-sign-apple/Services/AuthService.swift`
+Example implementation: `hw-sign-apple/hw-sign-apple/Services/AuthService.swift`
 
-#### Android（Keystore）
-- 使用 Android Keystore API
-- 基于 TEE / StrongBox 密钥存储
+#### Android (Keystore)
+- Uses Android Keystore API
+- TEE / StrongBox-based key storage
 
-示例实现：`hw-sign-android/app/src/main/java/fan/ovo/hwsign/AuthService.kt`
+Example implementation: `hw-sign-android/app/src/main/java/fan/ovo/hwsign/AuthService.kt`
 
-### 示例API协议规范
+### Example API Protocol Specification
 
-#### 认证流程
+#### Authentication Flow
 
-1. 注册（POST /register）
-   - 标准用户注册，不包含硬件绑定
+1. Registration (POST /register)
+   - Standard user registration, without hardware binding
    ```json
    {
      "username": "string",
@@ -90,97 +90,101 @@
    }
    ```
 
-2. 带硬件绑定的登录（POST /login）
-   - 请求头:
-     - `x-rpc-sec-bound-token-hw-pub`: 硬件公钥（base64编码）
-     - `x-rpc-sec-bound-token-hw-pub-type`: 密钥算法（"ecdsa-p256", "rsa-2048"）
-   - 请求体:
+2. Hardware-Bound Login (POST /login)
+   - Request Headers:
+     - `x-rpc-sec-bound-token-hw-pub`: Hardware public key (base64 encoded)
+     - `x-rpc-sec-bound-token-hw-pub-type`: Key algorithm ("ecdsa-p256", "rsa-2048")
+   - Request Body:
    ```json
    {
      "username": "string",
      "password": "string"
    }
    ```
-   - 响应:
+   - Response:
    ```json
    {
      "token": "string"
    }
    ```
 
-3. 一个需要登录态的接口（GET /authenticated）
-   通用请求头:
+3. Authenticated API Request (GET /authenticated)
+   Common Request Headers:
    - `Authorization: Bearer <token>`
-   - `x-rpc-sec-bound-token-data`: 时间戳+随机Hex格式的字符串
-   - `x-rpc-sec-bound-token-data-sig`: 请求签名
+   - `x-rpc-sec-bound-token-data`: Timestamp+RandomHex string
+   - `x-rpc-sec-bound-token-data-sig`: Request signature
 
-   对于新临时密钥:
-   - `x-rpc-sec-bound-token-accel-pub`: 临时公钥
-   - `x-rpc-sec-bound-token-accel-pub-type`: 密钥算法类型
-   - `x-rpc-sec-bound-token-accel-pub-sig`: 硬件签名的临时密钥
+   For New Temporary Keys:
+   - `x-rpc-sec-bound-token-accel-pub`: Temporary public key
+   - `x-rpc-sec-bound-token-accel-pub-type`: Key algorithm type
+   - `x-rpc-sec-bound-token-accel-pub-sig`: Hardware-signed temporary key
 
-   新临时密钥时的响应头:
-   - `x-rpc-sec-bound-token-accel-pub-id`: 临时密钥ID
-   - `x-rpc-sec-bound-token-accel-pub-expire`: 过期秒级Unix时间戳
+   New Temporary Key Response Headers:
+   - `x-rpc-sec-bound-token-accel-pub-id`: Temporary key ID
+   - `x-rpc-sec-bound-token-accel-pub-expire`: Expiration as Unix timestamp in seconds
 
-   对于现有密钥:
-   - `x-rpc-sec-bound-token-accel-pub-id`: 临时密钥ID
+   For Existing Keys:
+   - `x-rpc-sec-bound-token-accel-pub-id`: Temporary key ID
 
-### 请求签名
+### Request Signatures
 
-即 `x-rpc-sec-bound-token-data`，使用格式 `{Timestamp}-{32BytesRandomHex}`，按安全性从高到低排序：
+Format for `x-rpc-sec-bound-token-data` is `{Timestamp}-{32BytesRandomHex}`, ordered by security from high to low:
 
-1. 带 Redis 的随机字符串
-   - 签名随机 nonce
-   - 存储在 Redis 中以防止重放
-   - 最佳安全性，需要 Redis
-   - 服务端只会使用一次该值，重复使用将认定非法
-   - 服务端会直接认定 Timestamp < Now - TExpire 的请求非法
+1. Random String with Redis
+   - Signs random nonce
+   - Stored in Redis to prevent replay attacks
+   - Best security, requires Redis
+   - Server uses each value only once, repeated use considered invalid
+   - Server rejects requests where Timestamp < Now - TExpire
 
-2. 请求体哈希
-   - 签名请求体的 SHA256 哈希
-   - 无需额外存储
-   - 需要访问原始请求体 (Grpc 接口可能不适用)
+2. Request Body Hash
+   - Signs SHA256 hash of request body
+   - No additional storage needed
+   - Requires access to original request body (may not apply to gRPC interfaces)
 
-3. 时间戳
-   - 签名当前时间戳
-   - 设置较短的过期窗口
-   - 最简单，安全性略低
+3. Timestamp
+   - Signs current timestamp
+   - Sets short expiration window
+   - Simplest, slightly lower security
 
-### 性能优化 - ECDH密钥协商
+### Performance Optimization - ECDH Key Negotiation
 
-对于性能敏感场景，通过ECDH协商共享密钥并使用HMAC-SHA256进行高性能签名：
+For performance-sensitive scenarios, ECDH-negotiated shared keys with HMAC-SHA256 for high-performance signatures:
 
-1. 初始化流程：
-   - SDK初始化时生成临时密钥对(CliTmpPub/CliTmpPriv)
-   - 使用硬件私钥对CliTmpPub完成签名(只需一次)
-   - 本次程序运行期间无需再次使用硬件签名
+1. Initialization Process:
+   - SDK generates temporary key pair (CliTmpPub/CliTmpPriv) during initialization
+   - Hardware private key signs CliTmpPub (only once)
+   - No need for hardware signing again during this program execution
 
-2. 请求签名流程：
-   - 首次请求时，服务端生成临时密钥对(SrvTmpPub/SrvTmpPriv)
-   - 服务端用CliTmpPub+SrvTmpPriv通过ECDH生成共享密钥HmacSecret
-   - 客户端用SrvTmpPub+CliTmpPriv通过ECDH生成相同的HmacSecret
-   - 后续请求使用HmacSecret计算HMAC-SHA256签名，性能更佳
+2. Request Signature Process:
+   - On first request, server generates temporary key pair (SrvTmpPub/SrvTmpPriv)
+   - Server uses CliTmpPub+SrvTmpPriv to generate shared key HmacSecret via ECDH
+   - Client uses SrvTmpPub+CliTmpPriv to generate the same HmacSecret via ECDH
+   - Subsequent requests use HmacSecret to calculate HMAC-SHA256 signatures for better performance
 
-#### 参考参数
+#### Reference Parameters
 
-在新的临时协商密钥对生成时：
-- `x-rpc-sec-bound-token-accel-pub`: 客户端临时协商公钥全文
-- `x-rpc-sec-bound-token-accel-pub-type`: 客户端临时协商公钥类型：`ecdh-p256`
-- `x-rpc-sec-bound-token-accel-pub-sig`: 客户端临时协商公钥用硬件密钥对生成的签名
+When generating new temporary negotiation key pairs:
+- `x-rpc-sec-bound-token-accel-pub`: Client temporary negotiation public key
+- `x-rpc-sec-bound-token-accel-pub-type`: Client temporary negotiation public key type: `ecdh-p256`
+- `x-rpc-sec-bound-token-accel-pub-sig`: Signature of client temporary negotiation public key generated with hardware key
 
-服务端返回新的临时协商公钥时：
-- `x-rpc-sec-bound-token-accel-pub`: 服务端临时协商公钥全文
-- `x-rpc-sec-bound-token-accel-pub-id`: 临时协商公钥 ID，指向协商后的对称密钥
-- `x-rpc-sec-bound-token-accel-pub-expire`: 过期秒级 Unix 时间戳
+When server returns new temporary negotiation public key:
+- `x-rpc-sec-bound-token-accel-pub`: Server temporary negotiation public key
+- `x-rpc-sec-bound-token-accel-pub-id`: Temporary negotiation public key ID, pointing to the negotiated symmetric key
+- `x-rpc-sec-bound-token-accel-pub-expire`: Expiration Unix timestamp in seconds
 
-请求时的签名参数：
-- `x-rpc-sec-bound-token-data`: 格式为`{Timestamp}-{32BytesRandomHex}`
-- `x-rpc-sec-bound-token-data-sig`: 对上述数据，使用协商对称密钥计算的 HMAC
-- `x-rpc-sec-bound-token-accel-pub-id`: 临时公钥 ID
+Signature parameters in requests:
+- `x-rpc-sec-bound-token-data`: Format is `{Timestamp}-{32BytesRandomHex}`
+- `x-rpc-sec-bound-token-data-sig`: HMAC calculated with negotiated symmetric key on the above data
+- `x-rpc-sec-bound-token-accel-pub-id`: Temporary public key ID
 
-## 示例
+## Examples
 
-所有子文件夹对应了每个平台的示例实现，都可直接打开工程进行编译
+All subfolders correspond to example implementations for each platform and can be directly opened as projects for compilation
 
-> 注：超过 90% 代码由 AI 辅助生成，但人工保证了正确性
+## Compare to DBSC (Device Bound Session Credentials)
+
+DBSC is also a cool solution with similar ideas. However, it is designed for Web Platform, and this repo use native abilities for all platforms. DBSC also doesn't sign all requests with hardware crypto keypairs, while this one will sign all requests.
+
+> Note: Over 90% of the code was generated with AI assistance, but human verification ensures correctness
