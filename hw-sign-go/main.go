@@ -486,7 +486,7 @@ func parsePublicKeyAsECDSAAndCheckCurveForECDH(keyData string) (*ecdsa.PublicKey
 
 // Verify ECDSA signature specifically
 func verifyECDSASignature(publicKey *ecdsa.PublicKey, data string, signature string) error {
-	sigBytes, err := base64.StdEncoding.DecodeString(signature)
+	sigBytes, err := base64.RawStdEncoding.DecodeString(signature)
 	if err != nil {
 		return fmt.Errorf("invalid signature format: %w", err)
 	}

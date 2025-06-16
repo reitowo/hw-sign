@@ -269,3 +269,106 @@ func TestPerformanceComparison(t *testing.T) {
 		t.Logf("ECDH: %v (avg: %v)", ecdhDuration, ecdhDuration/iterations)
 	})
 }
+
+// Test ECDSA P-256 signature verification with provided test data
+func TestECDSAP256SignatureVerification(t *testing.T) {
+	t.Log("Testing ECDSA P-256 signature verification with provided test data")
+
+	// Test data sets
+	testCases := []struct {
+		name         string
+		publicKeyB64 string
+		plaintextB64 string
+		signatures   []string
+	}{
+		{
+			name:         "Windows",
+			publicKeyB64: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEs7QlaLpB0jw6DQvyLyDtOqzvrrjHvrKqAnys6qgGyqozpku3tS/gwvcKNBDifyr05UYHYAcLzyLNJ57XYkPPiw==",
+			plaintextB64: "1234567890",
+			signatures: []string{
+				"YLvs+xya4PZU2/jz8saWk/tPlja4B9mkz6iDAHf1OfsMZDhtThpP5JMCtJociPp/sZGHq/4+LF5ndR4DYeCD6A==",
+				"Mvm0l6My9Cz8wXea8XFuRTNqYpDQuu+1qNzJyyoOI/WFwYsm/782HyHC4OOanZYtCtK2yUuFEUhvrHC8UA37rA==",
+				"1BYuwr05K8BC9YYScWwUSrQac71cmnj8so8Auukt2XiNm6o5R/ZauVdlzdCovLu9Y1EFYtfM4Ij0wSatXqMOcA==",
+				"YFfguSt6i6zUZwiRGKfJeFoDeDa6ZZ2Iknx0NUBNjyX054MJFr/IolsyDUefv+206y8VRk+3vPFcdJBre3K76Q==",
+			},
+		},
+		{
+			name:         "macOS",
+			publicKeyB64: "BJQ+7eXZcgPnI5P73nGlsgn3RCY1yLEhdA3KJNnrUbniC0LaSlUtMpaBhzeQjgRYZYi4wPSVfLJZ9T8Ao5CRai8=",
+			plaintextB64: "1234567890",
+			signatures: []string{
+				"MEUCIQDfWzCdfE50ZM/HsfO55PHIgqR5C+jg1WiwK1HVHLlSRQIgDnG2Xxhr4S+SWlHNWHgzaxeMVV02xjiLMlh6qAJFwJ0=",
+				"MEUCIHQMI9V89fSU9leOGQLr7cCTY56Vuc44OkxpLVWZUmojAiEAtcrJp7E50Id6SdEqFVtstjUp+rpZSpu3Vzhgwff94+E=",
+				"MEUCIFzPM6VC8fzEEX5wcq8D+LOQirjg1lDq7qqbo+i0P+dMAiEA4Spe3bGJdyTUGumjhc/Qosh9TDQnRkWQ9c0S2GwEFbA=",
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Logf("Testing %s", testCase.name)
+
+		// Parse the public key
+		t.Logf("Step 1: Parsing ECDSA P-256 public key for %s", testCase.name)
+
+		// Handle different key formats
+		var publicKey interface{}
+		var err error
+
+		// Try parsing as standard PKIX first
+		publicKey, err = parsePublicKey(testCase.publicKeyB64, "ecdsa")
+		if err != nil {
+			// If PKIX parsing fails, try raw point format (second test case)
+			t.Errorf("PKIX parsing failed, trying raw point format: %v", err)
+			return
+		}
+
+		ecdsaKey, ok := publicKey.(*ecdsa.PublicKey)
+		if !ok {
+			t.Fatal("Parsed key is not ECDSA")
+		}
+
+		// Verify the curve
+		if ecdsaKey.Curve != elliptic.P256() {
+			t.Fatal("Key is not P-256 curve")
+		}
+		t.Logf("✓ Successfully parsed ECDSA P-256 public key for %s", testCase.name)
+
+		// Test signature verification
+		t.Logf("Step 2: Testing signature verification for %s", testCase.name)
+		successCount := 0
+
+		for i, sigB64 := range testCase.signatures {
+			t.Logf("Testing signature %d: %s", i+1, sigB64)
+
+			// Test using the main verifySignature function
+			sigBytes, err := base64.StdEncoding.DecodeString(sigB64)
+			if err != nil {
+				t.Errorf("Signature %d: Failed to decode signature: %v", i+1, err)
+				continue
+			}
+
+			// Test using the main verifySignature function
+			plainBytes, err := base64.RawStdEncoding.DecodeString(testCase.plaintextB64)
+			if err != nil {
+				t.Errorf("Signature %d: Failed to decode plaintextB64: %v", i+1, err)
+				continue
+			}
+
+			// Verify using the main verifySignature function
+			isValid := verifySignature(ecdsaKey, plainBytes, sigBytes)
+			if isValid {
+				t.Logf("✓ Signature %d verified successfully using verifySignature()", i+1)
+				successCount++
+			} else {
+				t.Logf("✗ Signature %d failed verification using verifySignature()", i+1)
+			}
+		}
+
+		t.Logf("Verification complete for %s: %d/%d signatures verified successfully", testCase.name, successCount, len(testCase.signatures))
+
+		if successCount == 0 {
+			t.Errorf("No signatures were successfully verified for %s - this may indicate a format issue", testCase.name)
+		}
+		t.Log("---")
+	}
+}
