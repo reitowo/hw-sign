@@ -22,6 +22,7 @@
 #include <memory>
 #include <sstream>
 #include <iomanip>
+#include <format>
 
 #pragma comment(lib, "ncrypt.lib")
 #pragma comment(lib, "bcrypt.lib")
@@ -60,7 +61,8 @@ public:
         if (hwKeyType_ == HardwareKeyType::RSA_2048_PSS) {
             generateRSAHardwareKey();
             keyTypeString_ = "rsa-2048-pss";
-        } else {
+        }
+        else {
             generateECDSAHardwareKey();
             keyTypeString_ = "ecdsa-p256";
         }
@@ -71,7 +73,8 @@ public:
             throw std::runtime_error("Failed to generate ECDH acceleration key");
         }
 
-        std::cout << "Generated " << keyTypeString_ << " hardware key (NCrypt) and ECDH P-256 acceleration key (OpenSSL)" << std::endl;
+        std::cout << "Generated " << keyTypeString_ <<
+            " hardware key (NCrypt) and ECDH P-256 acceleration key (OpenSSL)" << std::endl;
     }
 
     ~UnifiedCryptoHelper() {
@@ -88,6 +91,72 @@ public:
     }
 
 private:
+    std::wstring getHardwareKeyProperty(std::wstring name, std::string type) {
+        SECURITY_STATUS status;
+        DWORD cbResult = 0;
+        status = NCryptGetProperty(hHardwareKey_, name.data(),
+                                   NULL, cbResult, &cbResult, 0);
+        if (FAILED(status)) {
+            return L"N/A";
+        }
+
+        std::vector<BYTE> w;
+        w.resize(cbResult);
+        status = NCryptGetProperty(hHardwareKey_, name.data(),
+                                   (PBYTE)w.data(), cbResult, &cbResult, 0);
+        if (FAILED(status)) {
+            throw std::runtime_error("Failed to get property value");
+        }
+
+        if (type == "string") {
+            return (WCHAR*)w.data();
+        }
+
+        if (type == "bool") {
+            return w[0] == 0 ? L"false" : L"true";
+        }
+
+        if (type == "int") {
+            return std::to_wstring(*(DWORD*)w.data());
+        }
+
+        if (type == "binary") {
+            std::wstring result = L"0x";
+            for (BYTE byte : w) {
+                result += std::format(L"{:02X}", byte);
+            }
+            return result;
+        }
+    }
+
+    void printHardwareKeyProperties() {
+        std::pair<std::wstring, std::string> all_properties[] = {
+            {NCRYPT_ALGORITHM_PROPERTY, "string"},
+            {NCRYPT_LENGTH_PROPERTY, "string"},
+            {NCRYPT_BLOCK_LENGTH_PROPERTY, "string"},
+            {NCRYPT_ECC_CURVE_NAME_PROPERTY, "string"},
+            {NCRYPT_PCP_PLATFORM_TYPE_PROPERTY, "string"},
+            {NCRYPT_PCP_KEYATTESTATION_PROPERTY, "string"},
+            {NCRYPT_PCP_EKPUB_PROPERTY, "string"},
+            {NCRYPT_PCP_EKCERT_PROPERTY, "string"},
+            {NCRYPT_PCP_EKNVCERT_PROPERTY, "string"},
+            {NCRYPT_PCP_PCRTABLE_PROPERTY, "string"},
+            {NCRYPT_PCP_SESSIONID_PROPERTY, "string"},
+            {NCRYPT_PCP_EXPORT_ALLOWED_PROPERTY, "bool"},
+            {NCRYPT_PCP_TPM_VERSION_PROPERTY, "string"},
+            {NCRYPT_PCP_TPM_FW_VERSION_PROPERTY, "string"},
+            {NCRYPT_PCP_TPM_MANUFACTURER_ID_PROPERTY, "string"},
+            {NCRYPT_PCP_TPM2BNAME_PROPERTY, "binary"},
+            {NCRYPT_PCP_PLATFORMHANDLE_PROPERTY, "binary"},
+            {NCRYPT_PCP_PROVIDERHANDLE_PROPERTY, "binary"},
+        };
+
+        for (const auto& [name, type] : all_properties) {
+            std::wstring value = getHardwareKeyProperty(name, type);
+            std::wcout << L"Property " << name << L": " << value << std::endl;
+        }
+    }
+
     void generateECDSAHardwareKey() {
         std::wstring hwKeyName = L"HwSignTestECDSA_" + std::to_wstring(std::time(nullptr));
         SECURITY_STATUS status = NCryptCreatePersistedKey(
@@ -109,6 +178,8 @@ private:
             NCryptFreeObject(hHardwareKey_);
             throw std::runtime_error("Failed to finalize ECDSA hardware key");
         }
+
+        printHardwareKeyProperties();
     }
 
     void generateRSAHardwareKey() {
@@ -221,7 +292,8 @@ public:
         // Convert to standard format based on key type
         if (hwKeyType_ == HardwareKeyType::ECDSA_P256) {
             return convertECDSAKeyToPKIX(keyBlob);
-        } else {
+        }
+        else {
             return convertRSAKeyToPKIX(keyBlob);
         }
     }
@@ -230,7 +302,7 @@ private:
     std::string convertECDSAKeyToPKIX(std::vector<uint8_t>& keyBlob) {
         // BCrypt ECC public key blob structure
         BCRYPT_ECCKEY_BLOB* eccBlob = (BCRYPT_ECCKEY_BLOB*)keyBlob.data();
-        
+
         // Extract X and Y coordinates
         BYTE* x = keyBlob.data() + sizeof(BCRYPT_ECCKEY_BLOB);
         BYTE* y = x + eccBlob->cbKey;
@@ -283,7 +355,7 @@ private:
     std::string convertRSAKeyToPKIX(std::vector<uint8_t>& keyBlob) {
         // BCrypt RSA public key blob structure
         BCRYPT_RSAKEY_BLOB* rsaBlob = (BCRYPT_RSAKEY_BLOB*)keyBlob.data();
-        
+
         // Extract modulus and exponent
         BYTE* exponent = keyBlob.data() + sizeof(BCRYPT_RSAKEY_BLOB);
         BYTE* modulus = exponent + rsaBlob->cbPublicExp;
@@ -394,7 +466,8 @@ public:
             }
 
             return base64Encode(signature);
-        } else {
+        }
+        else {
             // Sign with ECDSA using NCrypt
             status = NCryptSignHash(
                 hHardwareKey_,
@@ -829,7 +902,7 @@ public:
 
     void runFullTest() {
         std::string keyTypeStr = (keyType_ == HardwareKeyType::RSA_2048_PSS) ? "RSA-2048-PSS" : "ECDSA-P256";
-        
+
         std::cout << "==========================================" << std::endl;
         std::cout << "Hardware-Bound Authentication Test" << std::endl;
         std::cout << keyTypeStr << " Hardware Key + ECDH-P256 Accel Key" << std::endl;
@@ -897,33 +970,36 @@ public:
 int main(int argc, char* argv[]) {
     try {
         std::cout << "Starting hardware-bound authentication test..." << std::endl;
-        
+
         // Default to testing both key types
         bool testECDSA = true;
         bool testRSA = true;
-        
+
         // Parse command line arguments
         if (argc > 1) {
             std::string arg = argv[1];
             if (arg == "ecdsa") {
                 testRSA = false;
-            } else if (arg == "rsa") {
+            }
+            else if (arg == "rsa") {
                 testECDSA = false;
-            } else if (arg == "both") {
+            }
+            else if (arg == "both") {
                 // Test both (default)
-            } else {
+            }
+            else {
                 std::cout << "Usage: " << argv[0] << " [ecdsa|rsa|both]" << std::endl;
                 return 1;
             }
         }
-        
+
         // Run tests based on selection
         if (testECDSA) {
             std::cout << "\nTesting with ECDSA-P256 hardware key..." << std::endl;
             TestClient clientECDSA(HardwareKeyType::ECDSA_P256);
             clientECDSA.runFullTest();
         }
-        
+
         if (testRSA) {
             if (testECDSA) {
                 std::cout << "\n\n";
