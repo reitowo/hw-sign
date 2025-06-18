@@ -541,8 +541,8 @@ public:
 
             // Add hardware key headers
             session_.SetHeader({
-                {"x-rpc-sec-dbcs-hw-pub", hardwareKey_.exportPublicKey()},
-                {"x-rpc-sec-dbcs-hw-pub-type", hardwareKey_.getKeyType()}
+                {"x-rpc-sec-bound-token-hw-pub", hardwareKey_.exportPublicKey()},
+                {"x-rpc-sec-bound-token-hw-pub-type", hardwareKey_.getKeyType()}
             });
 
             // Set body and URL path properly
@@ -595,25 +595,25 @@ public:
             // Setup common headers
             cpr::Header requestHeaders;
             requestHeaders["Authorization"] = "Bearer " + authToken_;
-            requestHeaders["x-rpc-sec-dbcs-data"] = timestamp;
+            requestHeaders["x-rpc-sec-bound-token-data"] = timestamp;
 
             // Setup request signature and headers based on acceleration key state
             if (!accelerationKeyId_.empty()) {
                 // Use existing acceleration key
-                requestHeaders["x-rpc-sec-dbcs-data-sig"] = base64Encode(hardwareKey_.sign({
+                requestHeaders["x-rpc-sec-bound-token-data-sig"] = base64Encode(hardwareKey_.sign({
                     timestamp.begin(), timestamp.end()
                 }));
-                requestHeaders["x-rpc-sec-dbcs-accel-pub-id"] = accelerationKeyId_;
+                requestHeaders["x-rpc-sec-bound-token-accel-pub-id"] = accelerationKeyId_;
             }
             else {
                 // Generate new acceleration key and sign with hardware key
                 std::string accelPub = hardwareKey_.exportPublicKey();
                 std::string accelPubSig = base64Encode(hardwareKey_.sign({accelPub.begin(), accelPub.end()}));
 
-                requestHeaders["x-rpc-sec-dbcs-accel-pub"] = accelPub;
-                requestHeaders["x-rpc-sec-dbcs-accel-pub-type"] = hardwareKey_.getKeyType();
-                requestHeaders["x-rpc-sec-dbcs-accel-pub-sig"] = accelPubSig;
-                requestHeaders["x-rpc-sec-dbcs-data-sig"] = base64Encode(hardwareKey_.sign({
+                requestHeaders["x-rpc-sec-bound-token-accel-pub"] = accelPub;
+                requestHeaders["x-rpc-sec-bound-token-accel-pub-type"] = hardwareKey_.getKeyType();
+                requestHeaders["x-rpc-sec-bound-token-accel-pub-sig"] = accelPubSig;
+                requestHeaders["x-rpc-sec-bound-token-data-sig"] = base64Encode(hardwareKey_.sign({
                     timestamp.begin(), timestamp.end()
                 }));
             }
@@ -626,7 +626,7 @@ public:
 
             if (response.status_code == 200) {
                 // Save acceleration key ID if this was a new key registration
-                auto it = response.header.find("x-rpc-sec-dbcs-accel-pub-id");
+                auto it = response.header.find("x-rpc-sec-bound-token-accel-pub-id");
                 if (it != response.header.end()) {
                     accelerationKeyId_ = it->second;
                 }

@@ -18,6 +18,9 @@ add_executable(hw_sign_win WIN32 main.cpp)
 # Add test executable (console application)
 add_executable(test_client test.cpp)
 
+# Add RSA NCrypt test executable (console application)
+add_executable(test_rsa_ncrypt test_rsa_ncrypt.cpp)
+
 # Link libraries to main executable
 target_link_libraries(hw_sign_win PRIVATE 
     cpr::cpr
@@ -33,4 +36,15 @@ target_link_libraries(test_client PRIVATE
     nlohmann_json::nlohmann_json
     OpenSSL::SSL
     OpenSSL::Crypto
+)
+
+# Link libraries to RSA NCrypt test executable
+target_link_libraries(test_rsa_ncrypt PRIVATE 
+    cpr::cpr
+    nlohmann_json::nlohmann_json
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    ncrypt
+    bcrypt
+    crypt32
 )

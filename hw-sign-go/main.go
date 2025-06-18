@@ -30,9 +30,9 @@ type KeyType string
 
 const (
 	KeyTypeEd25519 KeyType = "ed25519"
-	KeyTypeECDSA   KeyType = "ecdsa"
-	KeyTypeRSAPSS  KeyType = "rsa-pss"
-	KeyTypeECDH    KeyType = "ecdh"
+	KeyTypeECDSA   KeyType = "ecdsa-p256"
+	KeyTypeRSAPSS  KeyType = "rsa-2048-pss"
+	KeyTypeECDH    KeyType = "ecdh-p256"
 )
 
 // Unified key structures for better organization
@@ -43,7 +43,7 @@ type PublicKeyInfo struct {
 
 type UnifiedKeyInfo struct {
 	PublicKey     []byte      // Public key for asymmetric crypto
-	KeyType       KeyType     // Type of key (ecdsa, rsa-pss, ed25519)
+	KeyType       KeyType     // Type of key (ecdsa, rsa-2048, ed25519)
 	SymmetricKey  []byte      // AES-256 key for symmetric encryption (if available)
 	ServerPrivKey interface{} // Server's private key for ECDH (if applicable)
 	HwKey         interface{}
@@ -294,8 +294,8 @@ func computeSharedSecret(privateKey *ecdh.PrivateKey, publicKey *ecdh.PublicKey)
 func setCORSHeaders(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-rpc-sec-dbcs-hw-pub, x-rpc-sec-dbcs-hw-pub-type, x-rpc-sec-dbcs-accel-pub, x-rpc-sec-dbcs-accel-pub-type, x-rpc-sec-dbcs-accel-pub-sig, x-rpc-sec-dbcs-data, x-rpc-sec-dbcs-data-sig, x-rpc-sec-dbcs-accel-pub-id")
-	w.Header().Set("Access-Control-Expose-Headers", "x-rpc-sec-dbcs-accel-pub-id, x-rpc-sec-dbcs-accel-pub")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-rpc-sec-bound-token-hw-pub, x-rpc-sec-bound-token-hw-pub-type, x-rpc-sec-bound-token-accel-pub, x-rpc-sec-bound-token-accel-pub-type, x-rpc-sec-bound-token-accel-pub-sig, x-rpc-sec-bound-token-data, x-rpc-sec-bound-token-data-sig, x-rpc-sec-bound-token-accel-pub-id")
+	w.Header().Set("Access-Control-Expose-Headers", "x-rpc-sec-bound-token-accel-pub-id, x-rpc-sec-bound-token-accel-pub")
 }
 
 // Send error response with CORS headers
@@ -389,8 +389,8 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get and validate hardware public key
-	hwPubKey := r.Header.Get("x-rpc-sec-dbcs-hw-pub")
-	hwPubType := r.Header.Get("x-rpc-sec-dbcs-hw-pub-type")
+	hwPubKey := r.Header.Get("x-rpc-sec-bound-token-hw-pub")
+	hwPubType := r.Header.Get("x-rpc-sec-bound-token-hw-pub-type")
 
 	if hwPubKey == "" || hwPubType == "" {
 		errorResponse(w, "Missing hardware public key or type", http.StatusBadRequest)
@@ -486,7 +486,7 @@ func parsePublicKeyAsECDSAAndCheckCurveForECDH(keyData string) (*ecdsa.PublicKey
 
 // Verify ECDSA signature specifically
 func verifyECDSASignature(publicKey *ecdsa.PublicKey, data string, signature string) error {
-	sigBytes, err := base64.RawStdEncoding.DecodeString(signature)
+	sigBytes, err := base64.StdEncoding.DecodeString(signature)
 	if err != nil {
 		return fmt.Errorf("invalid signature format: %w", err)
 	}
@@ -550,11 +550,11 @@ func verifyAccelKeyRegistrationRequest(w http.ResponseWriter, r *http.Request, h
 	debugLog("verifyAccelKeyRegistration", "Processing acceleration key registration, hw key type: %s", hwKeyInfo.Type)
 
 	// Get request headers
-	accelPub := r.Header.Get("x-rpc-sec-dbcs-accel-pub")
-	accelPubType := r.Header.Get("x-rpc-sec-dbcs-accel-pub-type")
-	accelPubSig := r.Header.Get("x-rpc-sec-dbcs-accel-pub-sig")
-	data := r.Header.Get("x-rpc-sec-dbcs-data")
-	dataSig := r.Header.Get("x-rpc-sec-dbcs-data-sig")
+	accelPub := r.Header.Get("x-rpc-sec-bound-token-accel-pub")
+	accelPubType := r.Header.Get("x-rpc-sec-bound-token-accel-pub-type")
+	accelPubSig := r.Header.Get("x-rpc-sec-bound-token-accel-pub-sig")
+	data := r.Header.Get("x-rpc-sec-bound-token-data")
+	dataSig := r.Header.Get("x-rpc-sec-bound-token-data-sig")
 
 	if accelPub == "" || accelPubType == "" || accelPubSig == "" {
 		errorResponse(w, "Missing acceleration key or signature", http.StatusBadRequest)
@@ -603,7 +603,7 @@ func verifyAccelKeyRegistrationRequest(w http.ResponseWriter, r *http.Request, h
 
 	// Store the unified key
 	accelKeys.Set(accelKeyId, unifiedKey, cache.DefaultExpiration)
-	w.Header().Set("x-rpc-sec-dbcs-accel-pub-id", accelKeyId)
+	w.Header().Set("x-rpc-sec-bound-token-accel-pub-id", accelKeyId)
 
 	debugLog("verifyAccelKeyRegistration", "Acceleration key registered with ID: %s", accelKeyId)
 	return nil
@@ -644,7 +644,7 @@ func performDualPurposeECDHExchange(w http.ResponseWriter, accelPub string, data
 	// Step 4: Return server's public key to client
 	serverPubKeyBytes := serverECDHPriv.PublicKey().Bytes()
 	serverPubKeyBase64 := base64.StdEncoding.EncodeToString(serverPubKeyBytes)
-	w.Header().Set("x-rpc-sec-dbcs-accel-pub", serverPubKeyBase64)
+	w.Header().Set("x-rpc-sec-bound-token-accel-pub", serverPubKeyBase64)
 
 	// Step 5: Store the results in unified key info
 	unifiedKey.SymmetricKey = sharedSecret
@@ -659,8 +659,8 @@ func verifyRequest(w http.ResponseWriter, r *http.Request, keyInfo UnifiedKeyInf
 	debugLog("verifyRequest", "Verifying request, key type: %s, has symmetric key: %v", keyInfo.KeyType, keyInfo.SymmetricKey != nil)
 
 	// Get data and signature from request
-	data := r.Header.Get("x-rpc-sec-dbcs-data")
-	dataSig := r.Header.Get("x-rpc-sec-dbcs-data-sig")
+	data := r.Header.Get("x-rpc-sec-bound-token-data")
+	dataSig := r.Header.Get("x-rpc-sec-bound-token-data-sig")
 
 	debugLog("verifyRequest", "Request data: %s, signature length: %d", data, len(dataSig))
 
@@ -731,7 +731,7 @@ func validateAsymmetricRequest(keyInfo UnifiedKeyInfo, data, dataSig string) err
 
 // Handle request using an existing key
 func verifyExistingKeyRequest(w http.ResponseWriter, r *http.Request) error {
-	accelKeyId := r.Header.Get("x-rpc-sec-dbcs-accel-pub-id")
+	accelKeyId := r.Header.Get("x-rpc-sec-bound-token-accel-pub-id")
 	debugLog("verifyExistingKey", "Verifying request with existing key ID: %s", accelKeyId)
 	if accelKeyId == "" {
 		errorResponse(w, "Missing acceleration key ID", http.StatusBadRequest)
@@ -775,7 +775,7 @@ func authenticatedHandler(w http.ResponseWriter, r *http.Request) {
 	hwKeyInfo := tokenInfoValue.(PublicKeyInfo)
 
 	// Handle either key registration or regular request
-	if r.Header.Get("x-rpc-sec-dbcs-accel-pub") != "" {
+	if r.Header.Get("x-rpc-sec-bound-token-accel-pub") != "" {
 		debugLog("authenticatedHandler", "Request includes new acceleration key")
 		// This is a new key registration (either asymmetric or ECDH)
 		err = verifyAccelKeyRegistrationRequest(w, r, hwKeyInfo)

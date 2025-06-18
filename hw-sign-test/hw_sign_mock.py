@@ -418,7 +418,7 @@ class TestClient:
         # Build request headers
         headers = {
             "Authorization": f"Bearer {self.auth_token}",
-            "x-rpc-sec-dbcs-data": timestamp
+            "x-rpc-sec-bound-token-data": timestamp
         }
         
         if not self.accel_key_id:
@@ -433,10 +433,10 @@ class TestClient:
             
             # Add headers
             headers.update({
-                "x-rpc-sec-dbcs-accel-pub": accel_pub,
-                "x-rpc-sec-dbcs-accel-pub-type": accel_pub_type,
-                "x-rpc-sec-dbcs-accel-pub-sig": accel_pub_sig,
-                "x-rpc-sec-dbcs-data-sig": data_sig
+                "x-rpc-sec-bound-token-accel-pub": accel_pub,
+                "x-rpc-sec-bound-token-accel-pub-type": accel_pub_type,
+                "x-rpc-sec-bound-token-accel-pub-sig": accel_pub_sig,
+                "x-rpc-sec-bound-token-data-sig": data_sig
             })
             
             print(f"Acceleration public key (first 50 chars): {accel_pub[:50]}...")
@@ -464,8 +464,8 @@ class TestClient:
             
             # Add headers
             headers.update({
-                "x-rpc-sec-dbcs-accel-pub-id": self.accel_key_id,
-                "x-rpc-sec-dbcs-data-sig": data_sig
+                "x-rpc-sec-bound-token-accel-pub-id": self.accel_key_id,
+                "x-rpc-sec-bound-token-data-sig": data_sig
             })
             
             print(f"HMAC signature (first 20 chars): {data_sig[:20]}...")
