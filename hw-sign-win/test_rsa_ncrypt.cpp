@@ -147,19 +147,7 @@ public:
     std::string exportHardwarePublicKey() {
         DWORD cbPublicKey = 0;
         SECURITY_STATUS status;
-        LPCWSTR keyBlobType;
         DWORD keyBlobSize = 0;
-
-        // Determine the blob type based on key type
-        if (keyType_ == "ecdsa-p256") {
-            keyBlobType = BCRYPT_ECCPUBLIC_BLOB;
-        }
-        else if (keyType_ == "rsa-2048-pss") {
-            keyBlobType = BCRYPT_RSAPUBLIC_BLOB;
-        }
-        else {
-            throw std::runtime_error("Unsupported key type for export");
-        }
 
         // Convert BCrypt key to CryptoAPI key
         // For ECDSA, convert to CERT_PUBLIC_KEY_INFO using CAPI2
