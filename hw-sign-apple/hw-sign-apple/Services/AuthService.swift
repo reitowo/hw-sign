@@ -46,8 +46,8 @@ class AuthService {
         // Make login request with hardware key
         let body = ["username": username, "password": password]
         var request = try self.createRequest("login", method: "POST", body: body)
-        request.setValue(hwPubKeyBase64, forHTTPHeaderField: "x-rpc-sec-dbcs-hw-pub")
-        request.setValue("ecdsa", forHTTPHeaderField: "x-rpc-sec-dbcs-hw-pub-type")  // Always use ECDSA
+        request.setValue(hwPubKeyBase64, forHTTPHeaderField: "x-rpc-sec-bound-token-hw-pub")
+        request.setValue("ecdsa", forHTTPHeaderField: "x-rpc-sec-bound-token-hw-pub-type")  // Always use ECDSA
 
         URLSession.shared.dataTaskPublisher(for: request)
           .tryMap { data, response -> Data in
@@ -172,7 +172,7 @@ class AuthService {
         var request = try self.createRequest(path, method: method, body: body)
         request.setValue(
           "Bearer \(self.keyManager.getAuthToken() ?? "")", forHTTPHeaderField: "Authorization")
-        request.setValue(timestamp, forHTTPHeaderField: "x-rpc-sec-dbcs-data")
+        request.setValue(timestamp, forHTTPHeaderField: "x-rpc-sec-bound-token-data")
 
         if let accelKeyId = accelKeyId {
           // Use existing acceleration key
@@ -181,8 +181,8 @@ class AuthService {
             data: timestamp.data(using: .utf8)!, with: accelKey)
 
           request.setValue(
-            signature.base64EncodedString(), forHTTPHeaderField: "x-rpc-sec-dbcs-data-sig")
-          request.setValue(accelKeyId, forHTTPHeaderField: "x-rpc-sec-dbcs-accel-pub-id")
+            signature.base64EncodedString(), forHTTPHeaderField: "x-rpc-sec-bound-token-data-sig")
+          request.setValue(accelKeyId, forHTTPHeaderField: "x-rpc-sec-bound-token-accel-pub-id")
         } else {
           // Create new acceleration key
           let accelKey = try self.keyManager.createKey(.acceleration)
@@ -203,12 +203,12 @@ class AuthService {
           let signature = try self.keyManager.sign(
             data: timestamp.data(using: .utf8)!, with: accelKey)
 
-          request.setValue(accelPubKeyBase64, forHTTPHeaderField: "x-rpc-sec-dbcs-accel-pub")
-          request.setValue("ecdsa", forHTTPHeaderField: "x-rpc-sec-dbcs-accel-pub-type")  // Always use ECDSA
+          request.setValue(accelPubKeyBase64, forHTTPHeaderField: "x-rpc-sec-bound-token-accel-pub")
+          request.setValue("ecdsa", forHTTPHeaderField: "x-rpc-sec-bound-token-accel-pub-type")  // Always use ECDSA
           request.setValue(
-            accelKeySig.base64EncodedString(), forHTTPHeaderField: "x-rpc-sec-dbcs-accel-pub-sig")
+            accelKeySig.base64EncodedString(), forHTTPHeaderField: "x-rpc-sec-bound-token-accel-pub-sig")
           request.setValue(
-            signature.base64EncodedString(), forHTTPHeaderField: "x-rpc-sec-dbcs-data-sig")
+            signature.base64EncodedString(), forHTTPHeaderField: "x-rpc-sec-bound-token-data-sig")
         }
 
         URLSession.shared.dataTaskPublisher(for: request)
@@ -220,7 +220,7 @@ class AuthService {
             }
 
             if let accelKeyId = httpResponse.value(
-              forHTTPHeaderField: "x-rpc-sec-dbcs-accel-pub-id")
+              forHTTPHeaderField: "x-rpc-sec-bound-token-accel-pub-id")
             {
               self.keyManager.storeAccelKeyId(accelKeyId)
             }

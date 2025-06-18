@@ -452,7 +452,7 @@ async function authenticatedRequest<T>(
     });
 
     // Process response if this was a new key registration
-    if (!accelerationKeyId && response.headers['x-rpc-sec-dbcs-accel-pub-id']) {
+    if (!accelerationKeyId && response.headers['x-rpc-sec-bound-token-accel-pub-id']) {
       const headers = Object.fromEntries(
         Object.entries(response.headers).map(([key, value]) => [key, String(value)])
       );
@@ -487,18 +487,18 @@ async function handleExistingKeyAuth(headers: Record<string, string>, requestDat
     const hmac = await generateHMAC(symmetricKey, requestData);
     debugLog('Existing Auth', `Generated HMAC signature: ${hmac.substring(0, 20)}...`);
 
-    headers['x-rpc-sec-dbcs-data'] = requestData;
-    headers['x-rpc-sec-dbcs-data-sig'] = hmac; // Unified header for signature
-    headers['x-rpc-sec-dbcs-accel-pub-id'] = accelerationKeyId!;
+    headers['x-rpc-sec-bound-token-data'] = requestData;
+    headers['x-rpc-sec-bound-token-data-sig'] = hmac; // Unified header for signature
+    headers['x-rpc-sec-bound-token-accel-pub-id'] = accelerationKeyId!;
   } else if (accelerationKey) {
     // Use asymmetric signatures
     debugLog('Existing Auth', 'Using asymmetric signature authentication');
     const signature = await signWithKey(accelerationKey.privateKey, requestData);
     debugLog('Existing Auth', `Generated signature: ${signature.substring(0, 20)}...`);
 
-    headers['x-rpc-sec-dbcs-data'] = requestData;
-    headers['x-rpc-sec-dbcs-data-sig'] = signature; // Unified header for signature
-    headers['x-rpc-sec-dbcs-accel-pub-id'] = accelerationKeyId!;
+    headers['x-rpc-sec-bound-token-data'] = requestData;
+    headers['x-rpc-sec-bound-token-data-sig'] = signature; // Unified header for signature
+    headers['x-rpc-sec-bound-token-accel-pub-id'] = accelerationKeyId!;
   } else {
     debugLog('Existing Auth', 'Invalid key state, forcing new registration');
     accelerationKeyId = null;
@@ -523,11 +523,11 @@ async function handleNewKeyRegistration(headers: Record<string, string>, request
       // Sign request data with hardware key for this first exchange
       const dataSig = await signWithKey(hardwareKey!.privateKey, requestData);
 
-      headers['x-rpc-sec-dbcs-accel-pub'] = ecdhPubKeyBase64;
-      headers['x-rpc-sec-dbcs-accel-pub-type'] = 'ecdh';
-      headers['x-rpc-sec-dbcs-accel-pub-sig'] = ecdhPubKeySig;
-      headers['x-rpc-sec-dbcs-data'] = requestData;
-      headers['x-rpc-sec-dbcs-data-sig'] = dataSig;
+      headers['x-rpc-sec-bound-token-accel-pub'] = ecdhPubKeyBase64;
+      headers['x-rpc-sec-bound-token-accel-pub-type'] = 'ecdh';
+      headers['x-rpc-sec-bound-token-accel-pub-sig'] = ecdhPubKeySig;
+      headers['x-rpc-sec-bound-token-data'] = requestData;
+      headers['x-rpc-sec-bound-token-data-sig'] = dataSig;
       isEcdhGenerated = true;
     } catch (error) {
       debugLog('New Key Auth', 'ECDH key exchange failed, falling back to asymmetric keys', error);
@@ -541,11 +541,11 @@ async function handleNewKeyRegistration(headers: Record<string, string>, request
     const { accelPubKeyBase64, accelPubKeySig, keyType } = await setupAccelerationKey();
     const signature = await signWithKey(accelerationKey!.privateKey, requestData);
 
-    headers['x-rpc-sec-dbcs-accel-pub'] = accelPubKeyBase64;
-    headers['x-rpc-sec-dbcs-accel-pub-type'] = keyType;
-    headers['x-rpc-sec-dbcs-accel-pub-sig'] = accelPubKeySig;
-    headers['x-rpc-sec-dbcs-data'] = requestData;
-    headers['x-rpc-sec-dbcs-data-sig'] = signature;
+    headers['x-rpc-sec-bound-token-accel-pub'] = accelPubKeyBase64;
+    headers['x-rpc-sec-bound-token-accel-pub-type'] = keyType;
+    headers['x-rpc-sec-bound-token-accel-pub-sig'] = accelPubKeySig;
+    headers['x-rpc-sec-bound-token-data'] = requestData;
+    headers['x-rpc-sec-bound-token-data-sig'] = signature;
   }
 
   debugLog('New Key Auth', 'New key registration headers set up');
@@ -556,13 +556,13 @@ async function processKeyRegistrationResponse(headers: Record<string, string>): 
   debugLog('Key Registration', 'Processing key registration response', headers);
 
   // Store the key ID
-  const keyId = headers['x-rpc-sec-dbcs-accel-pub-id'];
+  const keyId = headers['x-rpc-sec-bound-token-accel-pub-id'];
   if (keyId) {
     debugLog('Key Registration', `Received key ID: ${keyId}`);
     accelerationKeyId = keyId;
 
     // If this was an ECDH key exchange, process server's public key
-    const serverPubKey = headers['x-rpc-sec-dbcs-accel-pub'];
+    const serverPubKey = headers['x-rpc-sec-bound-token-accel-pub'];
     if (ecdhAccelerationKey && serverPubKey && preferSymmetricEncryption) {
       debugLog('Key Registration', 'Processing ECDH server public key', {
         publicKeyLength: serverPubKey.length
@@ -635,8 +635,8 @@ export async function login(credentials: { username: string; password: string })
     credentials,
     {
       headers: {
-        'x-rpc-sec-dbcs-hw-pub': hwPubKey,
-        'x-rpc-sec-dbcs-hw-pub-type': hwKeyType,
+        'x-rpc-sec-bound-token-hw-pub': hwPubKey,
+        'x-rpc-sec-bound-token-hw-pub-type': hwKeyType,
       }
     }
   );

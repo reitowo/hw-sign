@@ -105,8 +105,8 @@ class AuthService(private val context: Context) {
                 val requestBody = json.toString().toRequestBody(jsonContentType)
                 val request = Request.Builder()
                     .url("$baseUrl/login")
-                    .header("x-rpc-sec-dbcs-hw-pub", publicKey)
-                    .header("x-rpc-sec-dbcs-hw-pub-type", "ecdsa")
+                    .header("x-rpc-sec-bound-token-hw-pub", publicKey)
+                    .header("x-rpc-sec-bound-token-hw-pub-type", "ecdsa")
                     .post(requestBody)
                     .build()
 
@@ -143,7 +143,7 @@ class AuthService(private val context: Context) {
             val requestBuilder = Request.Builder()
                 .url("$baseUrl/authenticated")
                 .header("Authorization", "Bearer $token")
-                .header("x-rpc-sec-dbcs-data", timestamp)
+                .header("x-rpc-sec-bound-token-data", timestamp)
 
             if (accelKeyId != null) {
                 // Use existing acceleration key
@@ -151,8 +151,8 @@ class AuthService(private val context: Context) {
                 val signature = keyManager.signWithKey(keyPair, timestamp)
                 
                 requestBuilder
-                    .header("x-rpc-sec-dbcs-data-sig", signature)
-                    .header("x-rpc-sec-dbcs-accel-pub-id", accelKeyId)
+                    .header("x-rpc-sec-bound-token-data-sig", signature)
+                    .header("x-rpc-sec-bound-token-accel-pub-id", accelKeyId)
             } else {
                 // Generate a new acceleration key
                 val keyPair = keyManager.generateAccelerationKey()
@@ -162,10 +162,10 @@ class AuthService(private val context: Context) {
                 val signature = keyManager.signWithKey(keyPair, timestamp)
 
                 requestBuilder
-                    .header("x-rpc-sec-dbcs-accel-pub", accelPubKey)
-                    .header("x-rpc-sec-dbcs-accel-pub-type", "ecdsa")
-                    .header("x-rpc-sec-dbcs-accel-pub-sig", accelPubKeySig)
-                    .header("x-rpc-sec-dbcs-data-sig", signature)
+                    .header("x-rpc-sec-bound-token-accel-pub", accelPubKey)
+                    .header("x-rpc-sec-bound-token-accel-pub-type", "ecdsa")
+                    .header("x-rpc-sec-bound-token-accel-pub-sig", accelPubKeySig)
+                    .header("x-rpc-sec-bound-token-data-sig", signature)
             }
 
             val request = requestBuilder.get().build()
@@ -173,7 +173,7 @@ class AuthService(private val context: Context) {
 
             if (response.isSuccessful) {
                 // Save acceleration key ID if this was a new key registration
-                response.header("x-rpc-sec-dbcs-accel-pub-id")?.let { newId ->
+                response.header("x-rpc-sec-bound-token-accel-pub-id")?.let { newId ->
                     keyManager.storeAccelKeyId(newId)
                 }
                 return@withContext true
