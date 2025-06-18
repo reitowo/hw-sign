@@ -284,7 +284,7 @@ func TestECDSAP256SignatureVerification(t *testing.T) {
 		{
 			name:         "Windows",
 			publicKeyB64: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEs7QlaLpB0jw6DQvyLyDtOqzvrrjHvrKqAnys6qgGyqozpku3tS/gwvcKNBDifyr05UYHYAcLzyLNJ57XYkPPiw==",
-			plaintextB64: "1234567890",
+			plaintextB64: "1234567890==",
 			signatures: []string{
 				"YLvs+xya4PZU2/jz8saWk/tPlja4B9mkz6iDAHf1OfsMZDhtThpP5JMCtJociPp/sZGHq/4+LF5ndR4DYeCD6A==",
 				"Mvm0l6My9Cz8wXea8XFuRTNqYpDQuu+1qNzJyyoOI/WFwYsm/782HyHC4OOanZYtCtK2yUuFEUhvrHC8UA37rA==",
@@ -295,7 +295,7 @@ func TestECDSAP256SignatureVerification(t *testing.T) {
 		{
 			name:         "macOS",
 			publicKeyB64: "BJQ+7eXZcgPnI5P73nGlsgn3RCY1yLEhdA3KJNnrUbniC0LaSlUtMpaBhzeQjgRYZYi4wPSVfLJZ9T8Ao5CRai8=",
-			plaintextB64: "1234567890",
+			plaintextB64: "1234567890==",
 			signatures: []string{
 				"MEUCIQDfWzCdfE50ZM/HsfO55PHIgqR5C+jg1WiwK1HVHLlSRQIgDnG2Xxhr4S+SWlHNWHgzaxeMVV02xjiLMlh6qAJFwJ0=",
 				"MEUCIHQMI9V89fSU9leOGQLr7cCTY56Vuc44OkxpLVWZUmojAiEAtcrJp7E50Id6SdEqFVtstjUp+rpZSpu3Vzhgwff94+E=",
@@ -315,7 +315,7 @@ func TestECDSAP256SignatureVerification(t *testing.T) {
 		var err error
 
 		// Try parsing as standard PKIX first
-		publicKey, err = parsePublicKey(testCase.publicKeyB64, "ecdsa")
+		publicKey, err = parsePublicKey(testCase.publicKeyB64, "ecdsa-p256")
 		if err != nil {
 			// If PKIX parsing fails, try raw point format (second test case)
 			t.Errorf("PKIX parsing failed, trying raw point format: %v", err)
@@ -348,7 +348,7 @@ func TestECDSAP256SignatureVerification(t *testing.T) {
 			}
 
 			// Test using the main verifySignature function
-			plainBytes, err := base64.RawStdEncoding.DecodeString(testCase.plaintextB64)
+			plainBytes, err := base64.StdEncoding.DecodeString(testCase.plaintextB64)
 			if err != nil {
 				t.Errorf("Signature %d: Failed to decode plaintextB64: %v", i+1, err)
 				continue
