@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -356,6 +357,90 @@ func TestECDSAP256SignatureVerification(t *testing.T) {
 
 			// Verify using the main verifySignature function
 			isValid := verifySignature(ecdsaKey, plainBytes, sigBytes)
+			if isValid {
+				t.Logf("✓ Signature %d verified successfully using verifySignature()", i+1)
+				successCount++
+			} else {
+				t.Logf("✗ Signature %d failed verification using verifySignature()", i+1)
+			}
+		}
+
+		t.Logf("Verification complete for %s: %d/%d signatures verified successfully", testCase.name, successCount, len(testCase.signatures))
+
+		if successCount == 0 {
+			t.Errorf("No signatures were successfully verified for %s - this may indicate a format issue", testCase.name)
+		}
+		t.Log("---")
+	}
+}
+
+// Test RSA-2048 PSS signature verification with provided test data
+func TestRSA2048PSSSignatureVerification(t *testing.T) {
+	t.Log("Testing RSA-2048 PSS signature verification with provided test data")
+
+	// Test data sets
+	testCases := []struct {
+		name         string
+		publicKeyB64 string
+		plaintextB64 string
+		signatures   []string
+	}{
+		{
+			name:         "Windows",
+			publicKeyB64: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3n0ussUHvZhH1nBZiWEka3OL6OFo7P+jXn+oaOkG+mloxG7JMmnp943z/z5rWvUNN6kZz2ZZeQ+k+ezBZKKvvI+n4ZP5IkgJ/I1nPJzRLKb79OgZATm4Bo/hhQIDdmcsHid7Ajmh+9PoqUwOcX/pZ6FFdSvw/cQc2SB38b5ghpCx3dpUrAfZUV1U3eC1uUr7KiyRm8Dj1hPg4ri9jJhqB4ktr0FjLF43kUlBmZzoNsKq9WcxukF/aLAAgYBBC/d0/FIBRemAgLWJWNm5j45aE0dmKFLfoz2hH4TG4mXKNljbc6O0dQUnM+xMkmhC5FrAXOo3YtZw8ooaVeALPjBCWwIDAQAB",
+			plaintextB64: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEiH3HbpFLTj27XqObpHeJKXW6j3TTwhX2o2LAheAmtBQU/Qgn/4DTeMlRh0tweqFno1QLhQ2Nu4QlpqmsiegscQ==",
+			signatures: []string{
+				"eKpBcP5DFWEMONxKk8iAyb5pabBppZVgBBT2Ftm9OmtQkh+bCPLGJM6ILVi6Tg3VafbBFPjwNERXSwfXbUsiP6ca8ijXKp7aWYdBu4gtRVbzoj6gr47jo3A38cMbfcm7AEpQfboovT6f0wUPXfnN2vEocprJM8vZ/BC3fmjNL8R5m3+QRY+y9b3Mu8zCr/rTLw8aflz7b7r2Nb+a2kkFLgdk1tgJTz+/gUTU/N+txVDyjFcdhWLY18p96D0PDVCgvYXIFstbF+VVZVSTAOSlg1QCP/JCEgMWrt1/cLimLr8hFXv0kAL2x4/V7C6KkZk7Z7BFxQbP76lpXtp5rTJnZw==",
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Logf("Testing %s", testCase.name)
+
+		// Parse the public key
+		t.Logf("Step 1: Parsing RSA-2048 PSS public key for %s", testCase.name)
+
+		// Handle different key formats
+		var publicKey interface{}
+		var err error
+
+		// Try parsing as standard PKIX first
+		publicKey, err = parsePublicKey(testCase.publicKeyB64, "rsa-2048-pss")
+		if err != nil {
+			// If PKIX parsing fails, try raw point format (second test case)
+			t.Errorf("PKIX parsing failed, trying raw point format: %v", err)
+			return
+		}
+
+		rsaKey, ok := publicKey.(*rsa.PublicKey)
+		if !ok {
+			t.Fatal("Parsed key is not RSA")
+		}
+
+		// Test signature verification
+		t.Logf("Step 2: Testing signature verification for %s", testCase.name)
+		successCount := 0
+
+		for i, sigB64 := range testCase.signatures {
+			t.Logf("Testing signature %d: %s", i+1, sigB64)
+
+			// Test using the main verifySignature function
+			sigBytes, err := base64.StdEncoding.DecodeString(sigB64)
+			if err != nil {
+				t.Errorf("Signature %d: Failed to decode signature: %v", i+1, err)
+				continue
+			}
+
+			// Test using the main verifySignature function
+			plainBytes, err := base64.StdEncoding.DecodeString(testCase.plaintextB64)
+			if err != nil {
+				t.Errorf("Signature %d: Failed to decode plaintextB64: %v", i+1, err)
+				continue
+			}
+
+			// Verify using the main verifySignature function
+			isValid := verifySignature(rsaKey, plainBytes, sigBytes)
 			if isValid {
 				t.Logf("✓ Signature %d verified successfully using verifySignature()", i+1)
 				successCount++
