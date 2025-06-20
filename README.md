@@ -1,4 +1,4 @@
-# Hardware-Bound Authentication Mechanism
+# Hardware-Bound Authentication System
 
 Minimum Prototype Verification
 

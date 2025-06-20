@@ -1,0 +1,3 @@
+[submodule "hw-sign-win/TSS.MSR"]
+	path = hw-sign-win/TSS.MSR
+	url = https://github.com/reitowo/TSS.MSR.git
