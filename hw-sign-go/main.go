@@ -642,7 +642,7 @@ func performDualPurposeECDHExchange(w http.ResponseWriter, accelPub string, data
 	}
 
 	// Step 4: Return server's public key to client
-	serverPubKeyBytes := serverECDHPriv.PublicKey().Bytes()
+	serverPubKeyBytes, _ := x509.MarshalPKIXPublicKey(serverECDHPriv.PublicKey())
 	serverPubKeyBase64 := base64.StdEncoding.EncodeToString(serverPubKeyBytes)
 	w.Header().Set("x-rpc-sec-bound-token-accel-pub", serverPubKeyBase64)
 

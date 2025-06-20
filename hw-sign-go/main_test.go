@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -192,7 +193,9 @@ func TestCompleteWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to generate server ECDH key pair:", err)
 	}
-	t.Logf("Server ECDH public key: %s", base64.StdEncoding.EncodeToString(serverECDHPriv.PublicKey().Bytes()))
+
+	serverECDHPub, _ := x509.MarshalPKIXPublicKey(serverECDHPriv.PublicKey())
+	t.Logf("Server ECDH public key: %s", base64.StdEncoding.EncodeToString(serverECDHPub))
 
 	// Perform key exchange
 	sharedSecret, err := serverECDHPriv.ECDH(clientECDHPub)
@@ -301,6 +304,14 @@ func TestECDSAP256SignatureVerification(t *testing.T) {
 				"MEUCIQDfWzCdfE50ZM/HsfO55PHIgqR5C+jg1WiwK1HVHLlSRQIgDnG2Xxhr4S+SWlHNWHgzaxeMVV02xjiLMlh6qAJFwJ0=",
 				"MEUCIHQMI9V89fSU9leOGQLr7cCTY56Vuc44OkxpLVWZUmojAiEAtcrJp7E50Id6SdEqFVtstjUp+rpZSpu3Vzhgwff94+E=",
 				"MEUCIFzPM6VC8fzEEX5wcq8D+LOQirjg1lDq7qqbo+i0P+dMAiEA4Spe3bGJdyTUGumjhc/Qosh9TDQnRkWQ9c0S2GwEFbA=",
+			},
+		},
+		{
+			name:         "Test3",
+			publicKeyB64: "BGD4KpyqndHf5CTpAlZXTubZXaaoqac4LJ0QNUlS8rWjOwh8frmZTsAD1C6ps5iB5aZt5lc/X8LGgMu0334plGg=",
+			plaintextB64: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEigUJp7M4QumQ7r+xgsQqgNCsxFVaOz30EslGdi+lmN0DcX7RKAHCldU96JRj4A/AKxYOeN/Fb7VdVb7Wy1w3dg==",
+			signatures: []string{
+				"MEYCIQDA5DNoHDj5vX6pvtxRcu8HJnB4sDE7tMvOkKz+F8roGAIhAPzSWhOtE4sT3nCF7rcH0SQXmGWwHbCgplOOnnQh+EmP",
 			},
 		},
 	}
