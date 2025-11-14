@@ -31,10 +31,11 @@ import (
 type KeyType string
 
 const (
-	KeyTypeEd25519 KeyType = "ed25519"
-	KeyTypeECDSA   KeyType = "ecdsa-p256"
-	KeyTypeRSAPSS  KeyType = "rsa-2048-pss"
-	KeyTypeECDH    KeyType = "ecdh-p256"
+	KeyTypeEd25519  KeyType = "ed25519"
+	KeyTypeECDSA    KeyType = "ecdsa-p256"
+	KeyTypeRSAPSS   KeyType = "rsa-2048-pss"
+	KeyTypeRSAPKCS1 KeyType = "rsa-2048-pkcs1"
+	KeyTypeECDH     KeyType = "ecdh-p256"
 )
 
 // Unified key structures for better organization
@@ -248,7 +249,7 @@ func parsePublicKey(keyData string, keyType string) (interface{}, error) {
 	case string(KeyTypeECDSA):
 		return parseECDSAPublicKey(decoded)
 
-	case string(KeyTypeRSAPSS):
+	case string(KeyTypeRSAPKCS1), string(KeyTypeRSAPSS):
 		return parseRSAPublicKey(decoded)
 
 	case string(KeyTypeECDH):
@@ -351,7 +352,7 @@ func verifySignature(publicKey interface{}, data []byte, signature []byte) bool 
 
 	switch key := publicKey.(type) {
 	case ed25519.PublicKey:
-		return ed25519.Verify(key, data, signature)
+		return ed25519.Verify(key, hash[:], signature)
 
 	case *ecdsa.PublicKey:
 		// Try ASN.1 signature first
@@ -366,17 +367,31 @@ func verifySignature(publicKey interface{}, data []byte, signature []byte) bool 
 		}
 		return false
 
-	case *rsa.PublicKey:
-		opts := &rsa.PSSOptions{
-			SaltLength: rsa.PSSSaltLengthAuto,
-			Hash:       crypto.SHA256,
-		}
-		err := rsa.VerifyPSS(key, crypto.SHA256, hash[:], signature, opts)
-		return err == nil
-
 	default:
 		return false
 	}
+}
+
+// Verify a signature using the appropriate algorithm based on key type
+func verifyRsaSignature(pt string, publicKey interface{}, data []byte, signature []byte) bool {
+	hash := sha256.Sum256(data)
+
+	switch key := publicKey.(type) {
+	case *rsa.PublicKey:
+		switch pt {
+		case "rsa-2048-pkcs1":
+			err := rsa.VerifyPKCS1v15(key, crypto.SHA256, hash[:], signature)
+			return err == nil
+		case "rsa-2048-pss":
+			opts := &rsa.PSSOptions{
+				SaltLength: rsa.PSSSaltLengthAuto,
+				Hash:       crypto.SHA256,
+			}
+			err := rsa.VerifyPSS(key, crypto.SHA256, hash[:], signature, opts)
+			return err == nil
+		}
+	}
+	return false
 }
 
 // Generate a new ECDH key pair

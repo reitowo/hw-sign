@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"testing"
 	"time"
 )
@@ -314,6 +315,14 @@ func TestECDSAP256SignatureVerification(t *testing.T) {
 				"MEYCIQDA5DNoHDj5vX6pvtxRcu8HJnB4sDE7tMvOkKz+F8roGAIhAPzSWhOtE4sT3nCF7rcH0SQXmGWwHbCgplOOnnQh+EmP",
 			},
 		},
+		{
+			name:         "Test4",
+			publicKeyB64: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEiGpjwHRZfiuRk6bAy8xKeoMdM5ex2L/KVikS2sFkLtl5QLszgyUzxlHjghv1RNOcz5qWCjbVMZOLXIBUeXYE7w==",
+			plaintextB64: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEK1s/UhIVBosAJKK7yfs84uMUt/yKuUNWJbkZH3aDzo0/lq5d8lhZzTSNrIYKFYqBYauqlctodtofeITQBHphvQ==",
+			signatures: []string{
+				"MEUCIC3BWF5/3EW/3WDocaVT3s9740566Eggl9g6uNVkx9DeAiEAz11/Wp+jwtxdhq0yDDKrlUUZ+Uw4TrNDYAAqEsLV1b0=",
+			},
+		},
 	}
 
 	for _, testCase := range testCases {
@@ -385,23 +394,36 @@ func TestECDSAP256SignatureVerification(t *testing.T) {
 	}
 }
 
-// Test RSA-2048 PSS signature verification with provided test data
-func TestRSA2048PSSSignatureVerification(t *testing.T) {
-	t.Log("Testing RSA-2048 PSS signature verification with provided test data")
+// Test RSA-2048 signature verification with provided test data
+func TestRSA2048SignatureVerification(t *testing.T) {
+	t.Log("Testing RSA-2048 signature verification with provided test data")
+
+	net.IPv4(10, 1, 1, 1)
 
 	// Test data sets
 	testCases := []struct {
 		name         string
+		keyType      string
 		publicKeyB64 string
 		plaintextB64 string
 		signatures   []string
 	}{
 		{
 			name:         "Windows",
+			keyType:      "rsa-2048-pss",
 			publicKeyB64: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3n0ussUHvZhH1nBZiWEka3OL6OFo7P+jXn+oaOkG+mloxG7JMmnp943z/z5rWvUNN6kZz2ZZeQ+k+ezBZKKvvI+n4ZP5IkgJ/I1nPJzRLKb79OgZATm4Bo/hhQIDdmcsHid7Ajmh+9PoqUwOcX/pZ6FFdSvw/cQc2SB38b5ghpCx3dpUrAfZUV1U3eC1uUr7KiyRm8Dj1hPg4ri9jJhqB4ktr0FjLF43kUlBmZzoNsKq9WcxukF/aLAAgYBBC/d0/FIBRemAgLWJWNm5j45aE0dmKFLfoz2hH4TG4mXKNljbc6O0dQUnM+xMkmhC5FrAXOo3YtZw8ooaVeALPjBCWwIDAQAB",
 			plaintextB64: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEiH3HbpFLTj27XqObpHeJKXW6j3TTwhX2o2LAheAmtBQU/Qgn/4DTeMlRh0tweqFno1QLhQ2Nu4QlpqmsiegscQ==",
 			signatures: []string{
 				"eKpBcP5DFWEMONxKk8iAyb5pabBppZVgBBT2Ftm9OmtQkh+bCPLGJM6ILVi6Tg3VafbBFPjwNERXSwfXbUsiP6ca8ijXKp7aWYdBu4gtRVbzoj6gr47jo3A38cMbfcm7AEpQfboovT6f0wUPXfnN2vEocprJM8vZ/BC3fmjNL8R5m3+QRY+y9b3Mu8zCr/rTLw8aflz7b7r2Nb+a2kkFLgdk1tgJTz+/gUTU/N+txVDyjFcdhWLY18p96D0PDVCgvYXIFstbF+VVZVSTAOSlg1QCP/JCEgMWrt1/cLimLr8hFXv0kAL2x4/V7C6KkZk7Z7BFxQbP76lpXtp5rTJnZw==",
+			},
+		},
+		{
+			name:         "Windows",
+			keyType:      "rsa-2048-pkcs1",
+			publicKeyB64: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxfuWX2tr4iyhrR1723yqk3GuGHk7FjIhwGtQ7wJzxfHh3J0vYWrpnt+sbtmY4YvIiXNdNKVfmVsLSn9wiQiZrIFnwxmAVtP1xO+FZUfEk5OtsQY1SqZ1+HZOJNXdagxOz0Ib+7Aw806emYJ/grq7aHo4Z5skg6iaDLF/xE4MITdsrCIA8J98iLbJmAUElMG4FflnjNCAmtui0fcZ5zORrIMQeE/DDUw3a9QzIp/Ka8PI8DgXOwyQ8lmQTZ/X9xcPIF/8R6yAJ7LvrxwSYDOmvayni1L8qWvtn6Fbj5dL7ucVg01hWzjC/mQa474URp2cZZh6ESuKHYaQx+Unl254DQIDAQAB",
+			plaintextB64: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEWEYb2EN0uvk9vsH6BewpsEqimgX4J9pvSZroFZduI+8fK/6yx9r/fOzwNNUhBksrGqrlEz6sFc3OrEWyTeR69Q==",
+			signatures: []string{
+				"xDCsKdHTzo6gJqZIEzpdQ7kO9+Ch559kmaVfmIYJ/qlG/ASwWahHFHT4yn9vPQXw/0ZYBSRtwXXdqdQMtQHAD1tqXoqm9p7kIHZEVGsqUUF1mZ28QipgYeWEWP6zqlVGVUiZk5aWOzd6+20xBqM5eMu4O23pIy4iteNipdCXo5HduuPQiKbKV0aRuV6QVA0KTIYnnSZ1igKIAlJHfRlc1+/nSLjXrOsG2INTzCr9zOMwdTAdHDZKFGT/q+vdcPdeLySmwb+KfLXQyRTKZ3zYIbnPTRTnnMkDqZdGJ+ZU6N094R5QFIw2LRtDwkbZDf11hMdGpmGpz9TjrBu11GRMJQ==",
 			},
 		},
 	}
@@ -410,17 +432,16 @@ func TestRSA2048PSSSignatureVerification(t *testing.T) {
 		t.Logf("Testing %s", testCase.name)
 
 		// Parse the public key
-		t.Logf("Step 1: Parsing RSA-2048 PSS public key for %s", testCase.name)
+		t.Logf("Step 1: Parsing RSA-2048 public key for %s", testCase.name)
 
 		// Handle different key formats
 		var publicKey interface{}
 		var err error
 
 		// Try parsing as standard PKIX first
-		publicKey, err = parsePublicKey(testCase.publicKeyB64, "rsa-2048-pss")
+		publicKey, err = parsePublicKey(testCase.publicKeyB64, testCase.keyType)
 		if err != nil {
-			// If PKIX parsing fails, try raw point format (second test case)
-			t.Errorf("PKIX parsing failed, trying raw point format: %v", err)
+			t.Errorf("Parsing failed, trying raw point format: %v", err)
 			return
 		}
 
@@ -451,7 +472,7 @@ func TestRSA2048PSSSignatureVerification(t *testing.T) {
 			}
 
 			// Verify using the main verifySignature function
-			isValid := verifySignature(rsaKey, plainBytes, sigBytes)
+			isValid := verifyRsaSignature(testCase.keyType, rsaKey, plainBytes, sigBytes)
 			if isValid {
 				t.Logf("✓ Signature %d verified successfully using verifySignature()", i+1)
 				successCount++
